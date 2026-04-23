@@ -16,7 +16,10 @@ export async function connect(wsUrl: string): Promise<BrowserClient> {
     number,
     { resolve: (value: unknown) => void; reject: (error: Error) => void }
   >();
-  const listeners = new Map<string, Set<(params: Record<string, unknown>) => void>>();
+  const listeners = new Map<
+    string,
+    Set<(params: Record<string, unknown>) => void>
+  >();
   let nextId = 1;
 
   ws.addEventListener("message", (event) => {
@@ -88,11 +91,16 @@ export async function connect(wsUrl: string): Promise<BrowserClient> {
   };
 }
 
-export async function ensureSingleChatgptTab(cdpHttpBase: string): Promise<ChromeTab> {
-  const tabs = (await fetch(`${cdpHttpBase}/json/list`).then((res) => res.json())) as ChromeTab[];
+export async function ensureSingleChatgptTab(
+  cdpHttpBase: string,
+): Promise<ChromeTab> {
+  const tabs = (await fetch(`${cdpHttpBase}/json/list`).then((res) =>
+    res.json(),
+  )) as ChromeTab[];
 
   const pageTabs = tabs.filter((tab) => tab.type === "page");
-  let selected = pageTabs.find((tab) => tab.url.includes("chatgpt.com")) ?? null;
+  let selected =
+    pageTabs.find((tab) => tab.url.includes("chatgpt.com")) ?? null;
 
   if (!selected) {
     selected = (await fetch(`${cdpHttpBase}/json/new?https://chatgpt.com/`, {
@@ -130,9 +138,14 @@ export async function captureNavigationResponses(
   });
   const offResponse = cdp.on("Network.responseReceived", (params) => {
     const requestId = String(params.requestId ?? "");
-    const response = params.response as { url?: string; mimeType?: string } | undefined;
+    const response = params.response as
+      | { url?: string; mimeType?: string }
+      | undefined;
     if (!requestId || !response?.url) return;
-    responseMeta.set(requestId, { url: response.url, mimeType: response.mimeType || "" });
+    responseMeta.set(requestId, {
+      url: response.url,
+      mimeType: response.mimeType || "",
+    });
   });
   const offFinish = cdp.on("Network.loadingFinished", async (params) => {
     const requestId = String(params.requestId ?? "");

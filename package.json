@@ -5,9 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "vite-node --watch src/index.ts",
-    "build": "vite build",
-    "start": "node dist/index.js",
+    "start": "vite-node src/index.ts",
     "typecheck": "tsc -p tsconfig.json",
     "export:chatgpt": "vite-node src/chatgpt/main.ts",
     "format": "prettier . --write"
@@ -16,7 +14,6 @@
     "@types/node": "^25.3.5",
     "prettier": "^3.6.2",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1",
     "vite-node": "^5.3.0"
   }
 }

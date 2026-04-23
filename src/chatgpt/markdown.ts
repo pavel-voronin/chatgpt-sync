@@ -131,7 +131,11 @@ export function isHiddenConversationNode(node: {
   if (["system", "user_editable_context"].includes(role)) {
     return true;
   }
-  if (["thoughts", "reasoning_recap", "model_editable_context"].includes(contentType)) {
+  if (
+    ["thoughts", "reasoning_recap", "model_editable_context"].includes(
+      contentType,
+    )
+  ) {
     return true;
   }
   if (contentType === "code") {
@@ -192,7 +196,9 @@ export function renderPartMarkdown(
   return "";
 }
 
-export function renderConversationMarkdownFromApi(conversation: ApiConversation) {
+export function renderConversationMarkdownFromApi(
+  conversation: ApiConversation,
+) {
   const mapping = conversation?.mapping || {};
   const root =
     mapping["client-created-root"] ||
@@ -227,8 +233,13 @@ export function renderConversationMarkdownFromApi(conversation: ApiConversation)
         .filter(Boolean)
         .join("\n\n");
 
-      const attachments = Array.isArray(metadata.attachments) ? metadata.attachments : [];
-      for (const attachment of attachments as Array<{ id?: string; name?: string }>) {
+      const attachments = Array.isArray(metadata.attachments)
+        ? metadata.attachments
+        : [];
+      for (const attachment of attachments as Array<{
+        id?: string;
+        name?: string;
+      }>) {
         if (!attachment?.id) continue;
         const token = `__ASSET_${attachment.id}__`;
         if (!markdown.includes(token)) {
@@ -241,7 +252,13 @@ export function renderConversationMarkdownFromApi(conversation: ApiConversation)
       markdown = markdown.trim();
       if (markdown) {
         const roleLabel =
-          role === "user" ? "User" : role === "assistant" ? "Assistant" : role === "tool" ? "Assistant" : role;
+          role === "user"
+            ? "User"
+            : role === "assistant"
+              ? "Assistant"
+              : role === "tool"
+                ? "Assistant"
+                : role;
         blocks.push({ role: roleLabel, markdown });
       }
     }
@@ -280,7 +297,10 @@ export async function saveCapturedAssets(
     const ext = inferFileExt(response.mimeType, response.url);
     const filename = `asset-${String(index).padStart(2, "0")}${ext}`;
     const filePath = path.join(assetDir, filename);
-    const bytes = Buffer.from(response.body, response.base64Encoded ? "base64" : "utf8");
+    const bytes = Buffer.from(
+      response.body,
+      response.base64Encoded ? "base64" : "utf8",
+    );
     await mkdir(assetDir, { recursive: true });
     tokenToPath.set(
       `__ASSET_${fileId}__`,
@@ -301,7 +321,8 @@ export function buildConversationMarkdown(params: {
   updatedAt: string;
   messageBlocks: string;
 }) {
-  const { title, conversationId, href, exportedAt, updatedAt, messageBlocks } = params;
+  const { title, conversationId, href, exportedAt, updatedAt, messageBlocks } =
+    params;
   return [
     "---",
     `title: ${escapeFrontmatter(title)}`,
@@ -318,8 +339,15 @@ export function buildConversationMarkdown(params: {
   ].join("\n");
 }
 
-export async function removeExistingArtifacts(existingFilePath: string, exportDir: string) {
+export async function removeExistingArtifacts(
+  existingFilePath: string,
+  exportDir: string,
+) {
   await rm(existingFilePath, { force: true });
-  const oldAssetDir = path.join(exportDir, "assets", path.basename(existingFilePath, ".md"));
+  const oldAssetDir = path.join(
+    exportDir,
+    "assets",
+    path.basename(existingFilePath, ".md"),
+  );
   await rm(oldAssetDir, { recursive: true, force: true });
 }
