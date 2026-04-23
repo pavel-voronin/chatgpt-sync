@@ -1,5 +1,9 @@
 import { mkdir, readdir } from "node:fs/promises";
-import { connect, ensureSingleChatgptTab } from "./cdp";
+import {
+  connect,
+  ensureSingleChatgptTab,
+  initializeChatgptSession,
+} from "./cdp";
 import { resolveConfig } from "./config";
 import {
   buildConversationIndexRecord,
@@ -53,9 +57,7 @@ export async function apiMain() {
 
   const tab = await ensureSingleChatgptTab(cdpHttp);
   const page = await connect(tab.webSocketDebuggerUrl);
-  await page.send("Page.enable");
-  await page.send("Network.enable");
-  await page.send("Runtime.enable");
+  await initializeChatgptSession(page);
 
   let backendHeaders: Record<string, string> | null = null;
   const offHeaders = page.on("Network.requestWillBeSentExtraInfo", (params) => {
@@ -74,6 +76,9 @@ export async function apiMain() {
   });
 
   try {
+    if (!tab.url.includes("chatgpt.com")) {
+      await page.send("Page.navigate", { url: "https://chatgpt.com/" });
+    }
     if (!backendHeaders) {
       await page.send("Page.reload", { ignoreCache: true });
       const startedAt = Date.now();

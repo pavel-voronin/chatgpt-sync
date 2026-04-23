@@ -3,6 +3,17 @@ import type { BrowserClient, CapturedResponse } from "./types";
 
 type CdpResponseMeta = { url: string; mimeType: string };
 
+const CHATGPT_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
+
+const CHATGPT_PRELOAD_SCRIPT = `
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' });
+window.chrome = window.chrome || { runtime: {} };
+`;
+
 type ChromeTab = {
   id: string;
   type: string;
@@ -99,23 +110,36 @@ export async function ensureSingleChatgptTab(
   )) as ChromeTab[];
 
   const pageTabs = tabs.filter((tab) => tab.type === "page");
-  let selected =
-    pageTabs.find((tab) => tab.url.includes("chatgpt.com")) ?? null;
+  const chatgptTabs = pageTabs.filter((tab) => tab.url.includes("chatgpt.com"));
+  const selected = chatgptTabs[0] ?? null;
 
-  if (!selected) {
-    selected = (await fetch(`${cdpHttpBase}/json/new?https://chatgpt.com/`, {
+  if (chatgptTabs.length === 0) {
+    return (await fetch(`${cdpHttpBase}/json/new?about:blank`, {
       method: "PUT",
     }).then((res) => res.json())) as ChromeTab;
   }
 
-  for (const tab of pageTabs) {
-    if (tab.id === selected.id) {
-      continue;
-    }
+  for (const tab of chatgptTabs.slice(1)) {
     await fetch(`${cdpHttpBase}/json/close/${tab.id}`).catch(() => undefined);
   }
 
   return selected;
+}
+
+export async function initializeChatgptSession(cdp: BrowserClient) {
+  await cdp.send("Network.enable");
+  await cdp.send("Page.enable");
+  await cdp.send("Runtime.enable");
+
+  await cdp.send("Network.setUserAgentOverride", {
+    userAgent: CHATGPT_USER_AGENT,
+    platform: "MacIntel",
+    acceptLanguage: "en-US,en",
+  });
+
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: CHATGPT_PRELOAD_SCRIPT,
+  });
 }
 
 export async function captureNavigationResponses(

@@ -1,8 +1,6 @@
-import { resolveStartupConfig } from "./config/env";
+import { apiMain } from "./chatgpt/api-export";
 
-const config = resolveStartupConfig(process.env);
-
-console.log("chatgpt dialog sync scaffold ready");
-console.log(`chrome profile dir: ${config.chromeProfileDir}`);
-console.log(`output dir: ${config.outputDir}`);
-console.log(`port: ${config.port}`);
+apiMain().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- fix: enable headless Chrome for sync startup
+- fix: run sync from `npm start` instead of the scaffold stub
+- fix: initialize ChatGPT tabs through CDP before navigation
+- fix: default CDP endpoint to `127.0.0.1:9222`
+
 ## 0.2.0
 
 - refactor(chatgpt): split sync into scan and export phases

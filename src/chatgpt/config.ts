@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { SyncBootstrapMode, SyncMode } from "./types";
 
-export const DEFAULT_CDP_HTTP = "http://127.0.0.1:9225";
+export const DEFAULT_CDP_HTTP = "http://127.0.0.1:9222";
 export const DEFAULT_EXPORT_DIR = path.join(process.cwd(), "output");
 export const DEFAULT_LIST_LIMIT = 28;
 export const DEFAULT_SYNC_MODE: SyncMode = "incremental";
