@@ -1,6 +1,9 @@
 export type BrowserClient = {
   send: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
-  on: (method: string, handler: (params: Record<string, unknown>) => void) => () => void;
+  on: (
+    method: string,
+    handler: (params: Record<string, unknown>) => void,
+  ) => () => void;
   close: () => void;
 };
 
@@ -35,37 +38,18 @@ export type ApiConversation = {
 };
 
 export type ChatgptIndex = {
-  schema_version: number;
-  exported_root: string;
-  conversations_file_limit: number;
-  sync: {
-    last_sync_at: string | null;
-    last_run_started_at: string | null;
-    last_run_completed_at: string | null;
-    last_run_mode: SyncMode | null;
-    last_run_effective_mode: SyncMode | SyncBootstrapMode | null;
-    last_run_page_limit: number | null;
-    last_run_limit: number | null;
-    last_run_days: number | null;
-    last_run_count: number | null;
-    last_run_overlap_minutes: number | null;
-    last_run_selected_count: number | null;
-    last_run_exported_count: number | null;
-    last_run_newest_update_time: string | null;
-    last_run_oldest_update_time: string | null;
-  };
+  watermark: string | null;
   conversations: Record<string, ChatgptIndexRecord>;
 };
 
 export type ChatgptIndexRecord = {
   summary: ConversationSummary;
   status: "pending" | "exported";
-  last_seen_at: string | null;
-  last_exported_at: string | null;
+  source_update_time: string | null;
+  exported_at: string | null;
+  updated_at: string | null;
   file_path: string;
   asset_dir: string;
   source_url: string;
-  exported_at: string | null;
-  updated_at: string | null;
   asset_count: number;
 };

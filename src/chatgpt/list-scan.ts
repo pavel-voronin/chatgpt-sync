@@ -1,4 +1,9 @@
-import type { BrowserClient, ConversationSummary, SyncBootstrapMode, SyncMode } from "./types";
+import type {
+  BrowserClient,
+  ConversationSummary,
+  SyncBootstrapMode,
+  SyncMode,
+} from "./types";
 
 type ConversationListResponse = {
   items?: ConversationSummary[];
@@ -31,23 +36,25 @@ export async function planConversationSummaries(
     countLimit: number;
     daysLimit: number;
     overlapMinutes: number;
-    lastSyncAt: string | null;
-    bootstrapMode: SyncBootstrapMode;
+    watermark: string | null;
+    bootstrapMode: SyncBootstrapMode | null;
     bootstrapCount: number;
     bootstrapDays: number;
     requestHeaders?: Record<string, string>;
   },
 ): Promise<ConversationScanPlan> {
-  const effectiveMode: SyncMode | SyncBootstrapMode =
-    params.mode === "incremental"
-      ? params.lastSyncAt
-        ? "incremental"
-        : params.bootstrapMode
-      : params.mode;
+  const effectiveMode: SyncMode | SyncBootstrapMode | null = params.watermark
+    ? params.mode
+    : params.bootstrapMode;
+  if (!effectiveMode) {
+    throw new Error(
+      "A bootstrap strategy must be set before the first scan can run",
+    );
+  }
 
   const cutoffAt = resolveCutoffAt({
     mode: effectiveMode,
-    lastSyncAt: params.lastSyncAt,
+    watermark: params.watermark,
     overlapMinutes: params.overlapMinutes,
     daysLimit: params.daysLimit,
     bootstrapDays: params.bootstrapDays,
@@ -56,11 +63,12 @@ export async function planConversationSummaries(
     mode: effectiveMode,
     countLimit: params.countLimit,
     bootstrapCount: params.bootstrapCount,
+    watermark: params.watermark,
   });
   const daysLimit = resolveDaysLimit({
     mode: effectiveMode,
     daysLimit: params.daysLimit,
-    lastSyncAt: params.lastSyncAt,
+    watermark: params.watermark,
     bootstrapDays: params.bootstrapDays,
   });
 
@@ -94,7 +102,11 @@ export async function planConversationSummaries(
         stopBecauseCount = true;
         break;
       }
-      if (cutoffAt && normalized.update_time && compareIso(normalized.update_time, cutoffAt) <= 0) {
+      if (
+        cutoffAt &&
+        normalized.update_time &&
+        compareIso(normalized.update_time, cutoffAt) <= 0
+      ) {
         stopBecauseCutoff = true;
         break;
       }
@@ -169,17 +181,29 @@ async function fetchConversationListPage(
     }.toString()})(${JSON.stringify(offset)}, ${JSON.stringify(limit)}, ${JSON.stringify(
       normalizeConversationListHeaders(requestHeaders),
     )})`,
-  })) as { result?: { value?: { ok?: boolean; status?: number; json?: ConversationListResponse } } };
+  })) as {
+    result?: {
+      value?: {
+        ok?: boolean;
+        status?: number;
+        json?: ConversationListResponse;
+      };
+    };
+  };
 
   const value = payload.result?.value;
   if (!value || !value.ok) {
-    throw new Error(`Could not fetch conversation list page offset=${offset} limit=${limit}`);
+    throw new Error(
+      `Could not fetch conversation list page offset=${offset} limit=${limit}`,
+    );
   }
 
   return value.json || {};
 }
 
-function normalizeConversationSummary(summary: ConversationSummary): ConversationSummary {
+function normalizeConversationSummary(
+  summary: ConversationSummary,
+): ConversationSummary {
   return {
     ...summary,
     id: String(summary.id || ""),
@@ -189,7 +213,7 @@ function normalizeConversationSummary(summary: ConversationSummary): Conversatio
 
 function resolveCutoffAt(params: {
   mode: SyncMode | SyncBootstrapMode;
-  lastSyncAt: string | null;
+  watermark: string | null;
   overlapMinutes: number;
   daysLimit: number;
   bootstrapDays: number;
@@ -200,10 +224,10 @@ function resolveCutoffAt(params: {
 
   const base =
     params.mode === "incremental"
-      ? params.lastSyncAt
+      ? params.watermark
       : toCutoffByDays(
           params.mode === "days"
-            ? params.lastSyncAt
+            ? params.watermark
               ? params.daysLimit
               : params.bootstrapDays
             : params.bootstrapDays,
@@ -223,9 +247,10 @@ function resolveCountLimit(params: {
   mode: SyncMode | SyncBootstrapMode;
   countLimit: number;
   bootstrapCount: number;
+  watermark: string | null;
 }) {
   if (params.mode === "count") {
-    return params.countLimit;
+    return params.watermark ? params.countLimit : params.bootstrapCount;
   }
   if (params.mode === "incremental") {
     return null;
@@ -239,13 +264,17 @@ function resolveCountLimit(params: {
 function resolveDaysLimit(params: {
   mode: SyncMode | SyncBootstrapMode;
   daysLimit: number;
-  lastSyncAt: string | null;
+  watermark: string | null;
   bootstrapDays: number;
 }) {
   if (params.mode === "days") {
-    return params.lastSyncAt ? params.daysLimit : params.bootstrapDays;
+    return params.watermark ? params.daysLimit : params.bootstrapDays;
   }
-  if (params.mode === "incremental" || params.mode === "count" || params.mode === "full") {
+  if (
+    params.mode === "incremental" ||
+    params.mode === "count" ||
+    params.mode === "full"
+  ) {
     return null;
   }
   return params.bootstrapDays;
@@ -271,11 +300,15 @@ function normalizeConversationListHeaders(headers: Record<string, string>) {
   return {
     authorization: headers.authorization || headers.Authorization || "",
     "oai-client-build-number":
-      headers["oai-client-build-number"] || headers["OAI-CLIENT-BUILD-NUMBER"] || "",
-    "oai-client-version": headers["oai-client-version"] || headers["OAI-CLIENT-VERSION"] || "",
+      headers["oai-client-build-number"] ||
+      headers["OAI-CLIENT-BUILD-NUMBER"] ||
+      "",
+    "oai-client-version":
+      headers["oai-client-version"] || headers["OAI-CLIENT-VERSION"] || "",
     "oai-device-id": headers["oai-device-id"] || headers["OAI-DEVICE-ID"] || "",
     "oai-language": headers["oai-language"] || headers["OAI-LANGUAGE"] || "",
-    "oai-session-id": headers["oai-session-id"] || headers["OAI-SESSION-ID"] || "",
+    "oai-session-id":
+      headers["oai-session-id"] || headers["OAI-SESSION-ID"] || "",
     "x-openai-target-path": "/backend-api/conversations",
     "x-openai-target-route": "/backend-api/conversations",
     referer: "https://chatgpt.com/",

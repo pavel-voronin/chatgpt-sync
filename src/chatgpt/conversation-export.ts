@@ -1,17 +1,20 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { captureNavigationResponses } from "./cdp";
 import {
   buildConversationMarkdown,
-  escapeFrontmatter,
   normalizeText,
   renderConversationMarkdownFromApi,
   safeFallbackSlug,
   saveCapturedAssets,
-  stripUpdatedAt,
   toIsoNow,
 } from "./markdown";
-import type { ApiConversation, BrowserClient, CapturedResponse, ConversationSummary } from "./types";
+import type {
+  ApiConversation,
+  BrowserClient,
+  CapturedResponse,
+  ConversationSummary,
+} from "./types";
 
 export type ConversationExportInput = {
   page: BrowserClient;
@@ -23,6 +26,7 @@ export type ConversationExportInput = {
   usedFileNames: Set<string>;
   existingFileNames: Set<string>;
   titleHint?: string;
+  exportStartedAt?: string;
 };
 
 export type ConversationExportOutput = {
@@ -31,13 +35,16 @@ export type ConversationExportOutput = {
   filePath: string;
   assetDir: string;
   turns: number;
-  images: number;
+  assets: number;
   summary: ConversationSummary;
   exportedAt: string;
   updatedAt: string;
 };
 
-export async function exportConversation(input: ConversationExportInput): Promise<ConversationExportOutput> {
+export async function exportConversation(
+  input: ConversationExportInput,
+): Promise<ConversationExportOutput> {
+  const exportStartedAt = input.exportStartedAt || toIsoNow();
   const convoResponses = await captureNavigationResponses(
     input.page,
     input.chatHref,
@@ -45,7 +52,10 @@ export async function exportConversation(input: ConversationExportInput): Promis
     (responses) => {
       const convoEntry = [...responses.entries()].find(([responseUrl]) => {
         try {
-          return new URL(responseUrl).pathname === `/backend-api/conversation/${input.chatId}`;
+          return (
+            new URL(responseUrl).pathname ===
+            `/backend-api/conversation/${input.chatId}`
+          );
         } catch {
           return false;
         }
@@ -54,8 +64,12 @@ export async function exportConversation(input: ConversationExportInput): Promis
         return false;
       }
       try {
-        const parsed = JSON.parse(responseBodyToText(convoEntry[1])) as ApiConversation;
-        return Boolean(parsed.mapping && Object.keys(parsed.mapping).length > 0);
+        const parsed = JSON.parse(
+          responseBodyToText(convoEntry[1]),
+        ) as ApiConversation;
+        return Boolean(
+          parsed.mapping && Object.keys(parsed.mapping).length > 0,
+        );
       } catch {
         return false;
       }
@@ -64,18 +78,27 @@ export async function exportConversation(input: ConversationExportInput): Promis
 
   const convoEntry = [...convoResponses.entries()].find(([responseUrl]) => {
     try {
-      return new URL(responseUrl).pathname === `/backend-api/conversation/${input.chatId}`;
+      return (
+        new URL(responseUrl).pathname ===
+        `/backend-api/conversation/${input.chatId}`
+      );
     } catch {
       return false;
     }
   });
   if (!convoEntry) {
-    throw new Error(`Could not capture conversation payload for ${input.chatId}`);
+    throw new Error(
+      `Could not capture conversation payload for ${input.chatId}`,
+    );
   }
 
-  const conversation = JSON.parse(responseBodyToText(convoEntry[1])) as ApiConversation;
+  const conversation = JSON.parse(
+    responseBodyToText(convoEntry[1]),
+  ) as ApiConversation;
   const rendered = renderConversationMarkdownFromApi(conversation);
-  const title = normalizeText(rendered.title || input.titleHint || input.chatId);
+  const title = normalizeText(
+    rendered.title || input.titleHint || input.chatId,
+  );
   const slug = safeFallbackSlug(title);
 
   let fileName = `${slug}.md`;
@@ -92,7 +115,11 @@ export async function exportConversation(input: ConversationExportInput): Promis
   input.existingFileNames.add(fileName);
 
   const markdownPath = path.join(input.exportDir, fileName);
-  const assetDir = path.join(input.exportDir, "assets", path.basename(fileName, ".md"));
+  const assetDir = path.join(
+    input.exportDir,
+    "assets",
+    path.basename(fileName, ".md"),
+  );
 
   const assetResponses = new Map<string, CapturedResponse>();
   for (const [responseUrl, response] of convoResponses.entries()) {
@@ -131,50 +158,35 @@ export async function exportConversation(input: ConversationExportInput): Promis
     })
     .join("\n\n");
 
-  const exportedAt = input.existingRecord?.frontmatter.exported_at || toIsoNow();
-  const existingUpdatedAt = input.existingRecord?.frontmatter.updated_at || exportedAt;
+  const exportedAt =
+    input.existingRecord?.frontmatter.exported_at || exportStartedAt;
   const nextContent = buildConversationMarkdown({
     title,
     conversationId: input.chatId,
     href: input.chatHref,
     exportedAt,
-    updatedAt: existingUpdatedAt,
+    updatedAt: exportStartedAt,
     messageBlocks,
   });
 
-  let finalContent = nextContent;
-  const existingContent = input.existingRecord?.filePath
-    ? await readFile(input.existingRecord.filePath, "utf8").catch(() => "")
-    : "";
-  const existingSamePath =
-    input.existingRecord?.filePath &&
-    path.resolve(input.existingRecord.filePath) === path.resolve(markdownPath);
-  const contentChanged =
-    !existingContent || stripUpdatedAt(existingContent) !== stripUpdatedAt(nextContent);
-  const updatedAt = contentChanged ? toIsoNow() : existingUpdatedAt;
-
-  if (existingSamePath && !contentChanged) {
-    finalContent = existingContent;
-  } else if (contentChanged) {
-    finalContent = nextContent.replace(
-      /^updated_at: .*$/m,
-      `updated_at: ${escapeFrontmatter(updatedAt)}`,
-    );
-  }
-
-  if (!existingSamePath || contentChanged) {
-    await writeFile(markdownPath, finalContent, "utf8");
-  }
+  await writeFile(markdownPath, nextContent, "utf8");
 
   if (
     input.existingRecord?.filePath &&
     path.resolve(input.existingRecord.filePath) !== path.resolve(markdownPath)
   ) {
     await rm(input.existingRecord.filePath, { force: true });
-    await rm(path.join(input.exportDir, "assets", path.basename(input.existingRecord.filePath, ".md")), {
-      recursive: true,
-      force: true,
-    });
+    await rm(
+      path.join(
+        input.exportDir,
+        "assets",
+        path.basename(input.existingRecord.filePath, ".md"),
+      ),
+      {
+        recursive: true,
+        force: true,
+      },
+    );
   }
 
   return {
@@ -183,7 +195,7 @@ export async function exportConversation(input: ConversationExportInput): Promis
     filePath: markdownPath,
     assetDir,
     turns: rendered.blocks.length,
-    images: rendered.assetIds.length,
+    assets: rendered.assetIds.length,
     summary: {
       id: input.chatId,
       title,
@@ -191,7 +203,7 @@ export async function exportConversation(input: ConversationExportInput): Promis
       update_time: undefined,
     },
     exportedAt,
-    updatedAt,
+    updatedAt: exportStartedAt,
   };
 }
 
@@ -206,9 +218,12 @@ async function downloadFileById(
   headers: Record<string, string>,
 ): Promise<CapturedResponse | undefined> {
   const requestHeaders = normalizeDownloadHeaders(headers, fileId);
-  const downloadResponse = await fetch(`https://chatgpt.com/backend-api/files/download/${fileId}`, {
-    headers: requestHeaders,
-  });
+  const downloadResponse = await fetch(
+    `https://chatgpt.com/backend-api/files/download/${fileId}`,
+    {
+      headers: requestHeaders,
+    },
+  );
   if (!downloadResponse.ok) {
     return undefined;
   }
@@ -257,7 +272,8 @@ function normalizeDownloadHeaders(
   ];
   const out: Record<string, string> = {};
   for (const key of keys) {
-    const value = headers[key] || headers[key.toLowerCase()] || headers[key.toUpperCase()];
+    const value =
+      headers[key] || headers[key.toLowerCase()] || headers[key.toUpperCase()];
     if (value) {
       out[key] = value;
     }
