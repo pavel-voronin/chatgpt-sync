@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+
+- feat(config): load settings from `.env` files
+- docs: document Chrome CDP requirements and group environment settings
+
 ## 0.8.1
 
 - fix(chatgpt): render current conversation branch and canvas textdoc updates

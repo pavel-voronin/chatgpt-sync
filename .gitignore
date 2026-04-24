@@ -5,5 +5,7 @@ tmp/
 coverage/
 output/
 .chrome-profile
+.env
+.env.local
 TODO.md
 AGENTS.md

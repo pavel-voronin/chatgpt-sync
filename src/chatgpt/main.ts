@@ -1,3 +1,4 @@
+import "../config/load-env";
 import { apiMain } from "./api-export";
 
 apiMain().catch((error) => {
