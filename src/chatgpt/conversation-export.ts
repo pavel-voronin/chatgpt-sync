@@ -34,6 +34,7 @@ export type ConversationExportInput = {
   existingMarkdownPaths: Set<string>;
   titleHint?: string;
   exportStartedAt?: string;
+  renderUnknownPartsAsJson?: boolean;
 };
 
 export type ConversationExportOutput = {
@@ -100,7 +101,9 @@ export async function exportConversation(
   const conversation = JSON.parse(
     responseBodyToText(convoEntry[1]),
   ) as ApiConversation;
-  const rendered = renderConversationMarkdownFromApi(conversation);
+  const rendered = renderConversationMarkdownFromApi(conversation, {
+    renderUnknownPartsAsJson: input.renderUnknownPartsAsJson,
+  });
   const title = normalizeText(
     rendered.title || input.titleHint || input.chatId,
   );

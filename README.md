@@ -41,3 +41,4 @@ Before the first run, set `CHATGPT_SYNC_BOOTSTRAP_MODE` to choose the bootstrap 
 - `CHATGPT_SYNC_BOOTSTRAP_COUNT` sets the conversation limit for bootstrap `count` mode. Default: `50`
 - `CHATGPT_SYNC_BOOTSTRAP_DAYS` sets the age window in days for bootstrap `days` mode. Default: `14`
 - `CHATGPT_SYNC_CONVERSATION_ID` exports a single conversation by id instead of running a list sync. Default: unset
+- `CHATGPT_SYNC_RENDER_UNKNOWN_PARTS_AS_JSON` renders unknown `content.parts` objects as fenced JSON blocks in Markdown. Default: disabled

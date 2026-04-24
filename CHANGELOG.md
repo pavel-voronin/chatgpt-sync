@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0
+
+- feat(chatgpt): optionally render unknown conversation parts as JSON
+- docs(readme): document unknown part JSON rendering flag
+
 ## 0.4.0
 
 - refactor(chatgpt): drive sync from workspace files

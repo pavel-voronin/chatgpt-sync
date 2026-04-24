@@ -176,6 +176,7 @@ export function renderPartMarkdown(
   part: unknown,
   recordAsset: (fileId: string) => string,
   metadata: Record<string, unknown>,
+  options: { renderUnknownPartsAsJson?: boolean } = {},
 ): string {
   if (typeof part === "string") {
     return normalizeText(part);
@@ -217,11 +218,16 @@ export function renderPartMarkdown(
     return normalizeText(typed.text);
   }
 
+  if (options.renderUnknownPartsAsJson) {
+    return renderJsonMarkdown(part);
+  }
+
   return "";
 }
 
 export function renderConversationMarkdownFromApi(
   conversation: ApiConversation,
+  options: { renderUnknownPartsAsJson?: boolean } = {},
 ) {
   const mapping = conversation?.mapping || {};
   const root =
@@ -253,7 +259,9 @@ export function renderConversationMarkdownFromApi(
       const parts = Array.isArray(content.parts) ? content.parts : [];
       const metadata = message.metadata || {};
       let markdown = parts
-        .map((part: unknown) => renderPartMarkdown(part, recordAsset, metadata))
+        .map((part: unknown) =>
+          renderPartMarkdown(part, recordAsset, metadata, options),
+        )
         .filter(Boolean)
         .join("\n\n");
 
@@ -463,4 +471,18 @@ function toPosixPath(value: string) {
     return ".";
   }
   return value.split(path.sep).join(path.posix.sep);
+}
+
+function renderJsonMarkdown(value: unknown): string {
+  const json = JSON.stringify(value, null, 2);
+  const fence = buildMarkdownFence(json);
+  return `${fence}json\n${json}\n${fence}`;
+}
+
+function buildMarkdownFence(content: string): string {
+  const longestBacktickRun = Math.max(
+    0,
+    ...Array.from(content.matchAll(/`+/g), (match) => match[0].length),
+  );
+  return "`".repeat(Math.max(3, longestBacktickRun + 1));
 }

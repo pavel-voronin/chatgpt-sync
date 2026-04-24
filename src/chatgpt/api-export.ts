@@ -40,6 +40,7 @@ export async function apiMain() {
     bootstrapCount,
     bootstrapDays,
     conversationId,
+    renderUnknownPartsAsJson,
   } = resolveConfig();
 
   await mkdir(workspaceDir, { recursive: true });
@@ -117,6 +118,7 @@ export async function apiMain() {
         existingMarkdownPaths: filesystem.markdownPaths,
         titleHint: existing?.summary.title,
         exportStartedAt: toIsoNow(),
+        renderUnknownPartsAsJson,
       });
 
       upsertConversationIndex(
@@ -198,6 +200,7 @@ export async function apiMain() {
       assetSubdir,
       fixedAssetDir,
       backendHeaders,
+      renderUnknownPartsAsJson,
     });
 
     await saveChatgptIndex(indexPath, index);
@@ -245,6 +248,7 @@ async function exportPendingConversations(params: {
   assetSubdir: string;
   fixedAssetDir: string;
   backendHeaders: Record<string, string>;
+  renderUnknownPartsAsJson?: boolean;
 }) {
   const filesystem = await readExistingRecords(params.workspaceDir);
   const usedMarkdownPaths = new Set<string>();
@@ -304,6 +308,7 @@ async function exportPendingConversations(params: {
       existingMarkdownPaths: filesystem.markdownPaths,
       titleHint: record.summary.title,
       exportStartedAt: startedAt,
+      renderUnknownPartsAsJson: params.renderUnknownPartsAsJson,
     });
 
     upsertConversationIndex(

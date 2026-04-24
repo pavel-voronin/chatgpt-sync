@@ -17,6 +17,11 @@ export const DEFAULT_INDEX_SCHEMA_VERSION = 1;
 export const DEFAULT_CONVERSATION_SCHEMA_VERSION = 1;
 export const DEFAULT_TIMEOUT_MS = 40_000;
 
+function parseBoolean(input: string | undefined): boolean {
+  const value = input?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 function parsePositiveInt(input: string | undefined, fallback: number) {
   const parsed = Number.parseInt(input ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -76,8 +81,7 @@ function resolveChildPath(root: string, candidate: string, fallback: string) {
 }
 
 export function resolveConfig() {
-  const cdpHttp =
-    process.env.CHATGPT_SYNC_CDP_HTTP?.trim() || DEFAULT_CDP_HTTP;
+  const cdpHttp = process.env.CHATGPT_SYNC_CDP_HTTP?.trim() || DEFAULT_CDP_HTTP;
   const workspaceDir =
     process.env.CHATGPT_SYNC_WORKSPACE_DIR?.trim() || DEFAULT_EXPORT_DIR;
   const inboxDir = resolveChildPath(
@@ -126,6 +130,9 @@ export function resolveConfig() {
   );
   const conversationId =
     process.env.CHATGPT_SYNC_CONVERSATION_ID?.trim() || null;
+  const renderUnknownPartsAsJson = parseBoolean(
+    process.env.CHATGPT_SYNC_RENDER_UNKNOWN_PARTS_AS_JSON,
+  );
 
   return {
     cdpHttp,
@@ -143,5 +150,6 @@ export function resolveConfig() {
     bootstrapCount,
     bootstrapDays,
     conversationId,
+    renderUnknownPartsAsJson,
   };
 }
