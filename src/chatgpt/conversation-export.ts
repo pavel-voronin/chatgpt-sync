@@ -35,6 +35,7 @@ export type ConversationExportInput = {
   titleHint?: string;
   exportStartedAt?: string;
   renderUnknownPartsAsJson?: boolean;
+  dumpRawConversationJson?: boolean;
 };
 
 export type ConversationExportOutput = {
@@ -98,9 +99,8 @@ export async function exportConversation(
     );
   }
 
-  const conversation = JSON.parse(
-    responseBodyToText(convoEntry[1]),
-  ) as ApiConversation;
+  const rawConversationJson = responseBodyToText(convoEntry[1]);
+  const conversation = JSON.parse(rawConversationJson) as ApiConversation;
   const rendered = renderConversationMarkdownFromApi(conversation, {
     renderUnknownPartsAsJson: input.renderUnknownPartsAsJson,
   });
@@ -184,12 +184,18 @@ export async function exportConversation(
 
   await mkdir(path.dirname(markdownPath), { recursive: true });
   await writeFile(markdownPath, nextContent, "utf8");
+  await syncRawConversationJsonArtifact({
+    markdownPath,
+    rawConversationJson,
+    enabled: Boolean(input.dumpRawConversationJson),
+  });
 
   if (
     input.existingRecord?.filePath &&
     path.resolve(input.existingRecord.filePath) !== path.resolve(markdownPath)
   ) {
     await rm(input.existingRecord.filePath, { force: true });
+    await removeRawConversationJsonArtifact(input.existingRecord.filePath);
     const oldAssetTarget = resolveAssetWriteTarget({
       strategy: input.assetStrategy,
       workspaceDir: input.workspaceDir,
@@ -214,6 +220,36 @@ export async function exportConversation(
     },
     updatedAt: exportStartedAt,
   };
+}
+
+async function syncRawConversationJsonArtifact(params: {
+  markdownPath: string;
+  rawConversationJson: string;
+  enabled: boolean;
+}) {
+  const filePath = rawConversationJsonPath(params.markdownPath);
+  if (!params.enabled) {
+    await rm(filePath, { force: true });
+    return;
+  }
+
+  await writeFile(
+    filePath,
+    ensureTrailingNewline(params.rawConversationJson),
+    "utf8",
+  );
+}
+
+async function removeRawConversationJsonArtifact(markdownPath: string) {
+  await rm(rawConversationJsonPath(markdownPath), { force: true });
+}
+
+function rawConversationJsonPath(markdownPath: string) {
+  return markdownPath.replace(/\.md$/i, ".json");
+}
+
+function ensureTrailingNewline(value: string) {
+  return value.endsWith("\n") ? value : `${value}\n`;
 }
 
 function responseBodyToText(response: CapturedResponse): string {

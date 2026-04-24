@@ -133,6 +133,9 @@ export function resolveConfig() {
   const renderUnknownPartsAsJson = parseBoolean(
     process.env.CHATGPT_SYNC_RENDER_UNKNOWN_PARTS_AS_JSON,
   );
+  const dumpRawConversationJson = parseBoolean(
+    process.env.CHATGPT_SYNC_DUMP_RAW_CONVERSATION_JSON,
+  );
 
   return {
     cdpHttp,
@@ -151,5 +154,6 @@ export function resolveConfig() {
     bootstrapDays,
     conversationId,
     renderUnknownPartsAsJson,
+    dumpRawConversationJson,
   };
 }

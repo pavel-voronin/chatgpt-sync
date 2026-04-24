@@ -21,7 +21,7 @@ Before the first run, set `CHATGPT_SYNC_BOOTSTRAP_MODE` to choose the bootstrap 
 - `output/` as the workspace root for Markdown files and sync state
 - `output/index.json` for sync state
 
-## Environment
+## Settings (ENV)
 
 - `CHATGPT_SYNC_CDP_HTTP` sets the Chrome DevTools endpoint. Default: `http://127.0.0.1:9222`
 - `CHATGPT_SYNC_WORKSPACE_DIR` sets the workspace root. Default: `./output`
@@ -42,3 +42,4 @@ Before the first run, set `CHATGPT_SYNC_BOOTSTRAP_MODE` to choose the bootstrap 
 - `CHATGPT_SYNC_BOOTSTRAP_DAYS` sets the age window in days for bootstrap `days` mode. Default: `14`
 - `CHATGPT_SYNC_CONVERSATION_ID` exports a single conversation by id instead of running a list sync. Default: unset
 - `CHATGPT_SYNC_RENDER_UNKNOWN_PARTS_AS_JSON` renders unknown `content.parts` objects as fenced JSON blocks in Markdown. Default: disabled
+- `CHATGPT_SYNC_DUMP_RAW_CONVERSATION_JSON` writes the raw conversation JSON next to each synced Markdown file. Default: disabled
