@@ -1,16 +1,19 @@
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { captureNavigationResponses } from "./cdp";
 import {
   buildConversationMarkdown,
   normalizeText,
+  removeAssetArtifacts,
   renderConversationMarkdownFromApi,
+  resolveAssetWriteTarget,
   safeFallbackSlug,
   saveCapturedAssets,
   toIsoNow,
 } from "./markdown";
 import type {
   ApiConversation,
+  AssetStrategy,
   BrowserClient,
   CapturedResponse,
   ConversationSummary,
@@ -20,11 +23,15 @@ export type ConversationExportInput = {
   page: BrowserClient;
   chatId: string;
   chatHref: string;
-  exportDir: string;
+  workspaceDir: string;
+  inboxDir: string;
+  assetStrategy: AssetStrategy;
+  assetSubdir: string;
+  fixedAssetDir: string;
   backendHeaders: Record<string, string>;
   existingRecord?: { filePath: string; frontmatter: Record<string, string> };
-  usedFileNames: Set<string>;
-  existingFileNames: Set<string>;
+  usedMarkdownPaths: Set<string>;
+  existingMarkdownPaths: Set<string>;
   titleHint?: string;
   exportStartedAt?: string;
 };
@@ -33,7 +40,6 @@ export type ConversationExportOutput = {
   title: string;
   href: string;
   filePath: string;
-  assetDir: string;
   turns: number;
   assets: number;
   summary: ConversationSummary;
@@ -99,26 +105,25 @@ export async function exportConversation(
     rendered.title || input.titleHint || input.chatId,
   );
   const slug = safeFallbackSlug(title);
+  const targetDir = input.existingRecord
+    ? path.dirname(input.existingRecord.filePath)
+    : input.inboxDir;
 
   let fileName = `${slug}.md`;
   let suffix = 2;
+  let markdownPath = path.join(targetDir, fileName);
   while (
-    input.usedFileNames.has(fileName) ||
-    (input.existingFileNames.has(fileName) &&
-      path.basename(input.existingRecord?.filePath || "") !== fileName)
+    input.usedMarkdownPaths.has(path.resolve(markdownPath)) ||
+    (input.existingMarkdownPaths.has(path.resolve(markdownPath)) &&
+      path.resolve(input.existingRecord?.filePath || "") !==
+        path.resolve(markdownPath))
   ) {
     fileName = `${slug}-${suffix}.md`;
+    markdownPath = path.join(targetDir, fileName);
     suffix += 1;
   }
-  input.usedFileNames.add(fileName);
-  input.existingFileNames.add(fileName);
-
-  const markdownPath = path.join(input.exportDir, fileName);
-  const assetDir = path.join(
-    input.exportDir,
-    "assets",
-    path.basename(fileName, ".md"),
-  );
+  input.usedMarkdownPaths.add(path.resolve(markdownPath));
+  input.existingMarkdownPaths.add(path.resolve(markdownPath));
 
   const assetResponses = new Map<string, CapturedResponse>();
   for (const [responseUrl, response] of convoResponses.entries()) {
@@ -137,14 +142,23 @@ export async function exportConversation(
     }
   }
 
+  const assetTarget = resolveAssetWriteTarget({
+    strategy: input.assetStrategy,
+    workspaceDir: input.workspaceDir,
+    markdownPath,
+    assetSubdir: input.assetSubdir,
+    fixedAssetDir: input.fixedAssetDir,
+  });
+  await removeAssetArtifacts(assetTarget);
+
   const tokenToPath = await saveCapturedAssets(
     rendered.assetIds,
     assetResponses,
-    assetDir,
+    assetTarget,
     async (fileId) => downloadFileById(fileId, input.backendHeaders),
   );
   if (tokenToPath.size === 0) {
-    await rm(assetDir, { recursive: true, force: true });
+    await removeAssetArtifacts(assetTarget);
   }
 
   const messageBlocks = rendered.blocks
@@ -165,6 +179,7 @@ export async function exportConversation(
     messageBlocks,
   });
 
+  await mkdir(path.dirname(markdownPath), { recursive: true });
   await writeFile(markdownPath, nextContent, "utf8");
 
   if (
@@ -172,24 +187,20 @@ export async function exportConversation(
     path.resolve(input.existingRecord.filePath) !== path.resolve(markdownPath)
   ) {
     await rm(input.existingRecord.filePath, { force: true });
-    await rm(
-      path.join(
-        input.exportDir,
-        "assets",
-        path.basename(input.existingRecord.filePath, ".md"),
-      ),
-      {
-        recursive: true,
-        force: true,
-      },
-    );
+    const oldAssetTarget = resolveAssetWriteTarget({
+      strategy: input.assetStrategy,
+      workspaceDir: input.workspaceDir,
+      markdownPath: input.existingRecord.filePath,
+      assetSubdir: input.assetSubdir,
+      fixedAssetDir: input.fixedAssetDir,
+    });
+    await removeAssetArtifacts(oldAssetTarget);
   }
 
   return {
     title,
     href: input.chatHref,
     filePath: markdownPath,
-    assetDir,
     turns: rendered.blocks.length,
     assets: rendered.assetIds.length,
     summary: {

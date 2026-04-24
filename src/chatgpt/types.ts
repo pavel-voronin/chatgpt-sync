@@ -32,6 +32,14 @@ export type SyncMode = "incremental" | "full" | "days" | "count";
 
 export type SyncBootstrapMode = "count" | "days" | "full";
 
+export type ConversationSyncStatus = "pending" | "exported" | "removed";
+
+export type AssetStrategy =
+  | "vault-root"
+  | "same-folder"
+  | "current-folder-subfolder"
+  | "fixed-folder";
+
 export type ApiConversation = {
   title?: string;
   mapping?: Record<string, unknown>;
@@ -44,9 +52,6 @@ export type ChatgptIndex = {
 
 export type ChatgptIndexRecord = {
   summary: ConversationSummary;
-  status: "pending" | "exported";
+  status: ConversationSyncStatus;
   updated_at: string | null;
-  file_path: string;
-  asset_dir: string;
-  source_url: string;
 };

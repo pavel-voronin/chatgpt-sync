@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ApiConversation, CapturedResponse } from "./types";
+import type { ApiConversation, AssetStrategy, CapturedResponse } from "./types";
 
 export function toIsoNow(): string {
   return new Date().toISOString();
@@ -67,27 +67,51 @@ export function stripUpdatedAt(content: string): string {
 }
 
 export async function readExistingRecords(dir: string) {
-  const entries = await readdir(dir, { withFileTypes: true });
   const records = new Map<
     string,
     { filePath: string; frontmatter: Record<string, string> }
   >();
+  const markdownPaths = new Set<string>();
+
+  await walkMarkdownRecords(dir, records, markdownPaths);
+
+  return {
+    records,
+    markdownPaths,
+  };
+}
+
+async function walkMarkdownRecords(
+  dir: string,
+  records: Map<
+    string,
+    { filePath: string; frontmatter: Record<string, string> }
+  >,
+  markdownPaths: Set<string>,
+) {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
 
   for (const entry of entries) {
+    const filePath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await walkMarkdownRecords(filePath, records, markdownPaths);
+      continue;
+    }
     if (!entry.isFile() || !entry.name.endsWith(".md")) {
       continue;
     }
 
-    const filePath = path.join(dir, entry.name);
-    const content = await readFile(filePath, "utf8");
+    markdownPaths.add(path.resolve(filePath));
+    const content = await readFile(filePath, "utf8").catch(() => "");
     const frontmatter = parseFrontmatter(content);
     const conversationId = frontmatter.conversation_id;
-    if (conversationId) {
-      records.set(conversationId, { filePath, frontmatter });
+    if (conversationId && !records.has(conversationId)) {
+      records.set(conversationId, {
+        filePath: path.resolve(filePath),
+        frontmatter,
+      });
     }
   }
-
-  return records;
 }
 
 export function inferFileExt(contentType: string | null, src: string): string {
@@ -277,13 +301,93 @@ export function renderConversationMarkdownFromApi(
   };
 }
 
+export type AssetWriteTarget = {
+  directory: string;
+  relativeDir: string;
+  cleanupPrefix: string | null;
+  cleanupMode: "directory" | "prefix";
+};
+
+export function resolveAssetWriteTarget(params: {
+  strategy: AssetStrategy;
+  workspaceDir: string;
+  markdownPath: string;
+  assetSubdir: string;
+  fixedAssetDir: string;
+}) {
+  const markdownDir = path.dirname(params.markdownPath);
+  const baseName = path.basename(params.markdownPath, ".md");
+
+  if (params.strategy === "same-folder") {
+    return {
+      directory: markdownDir,
+      relativeDir: ".",
+      cleanupPrefix: `${baseName}-asset-`,
+      cleanupMode: "prefix",
+    } satisfies AssetWriteTarget;
+  }
+
+  if (params.strategy === "vault-root") {
+    return {
+      directory: params.workspaceDir,
+      relativeDir: toPosixPath(path.relative(markdownDir, params.workspaceDir)),
+      cleanupPrefix: `${baseName}-asset-`,
+      cleanupMode: "prefix",
+    } satisfies AssetWriteTarget;
+  }
+
+  if (params.strategy === "fixed-folder") {
+    return {
+      directory: params.fixedAssetDir,
+      relativeDir: toPosixPath(
+        path.relative(markdownDir, params.fixedAssetDir),
+      ),
+      cleanupPrefix: `${baseName}-asset-`,
+      cleanupMode: "prefix",
+    } satisfies AssetWriteTarget;
+  }
+
+  const directory = path.join(markdownDir, params.assetSubdir, baseName);
+  return {
+    directory,
+    relativeDir: toPosixPath(path.relative(markdownDir, directory)),
+    cleanupPrefix: null,
+    cleanupMode: "directory",
+  } satisfies AssetWriteTarget;
+}
+
+export async function removeAssetArtifacts(target: AssetWriteTarget) {
+  if (target.cleanupMode === "directory") {
+    await rm(target.directory, { recursive: true, force: true });
+    return;
+  }
+
+  const entries = await readdir(target.directory, {
+    withFileTypes: true,
+  }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isFile() || !target.cleanupPrefix) {
+      continue;
+    }
+    if (entry.name.startsWith(target.cleanupPrefix)) {
+      await rm(path.join(target.directory, entry.name), { force: true });
+    }
+  }
+}
+
 export async function saveCapturedAssets(
   assetIds: string[],
   assetResponses: Map<string, CapturedResponse>,
-  assetDir: string,
+  target: AssetWriteTarget,
   downloader?: (fileId: string) => Promise<CapturedResponse | undefined>,
 ): Promise<Map<string, string>> {
   const tokenToPath = new Map<string, string>();
+  const usedNames = new Set<string>();
+  const existingNames = new Set(
+    (await readdir(target.directory, { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name),
+  );
   let index = 1;
   for (const fileId of assetIds) {
     let response = assetResponses.get(fileId);
@@ -295,17 +399,28 @@ export async function saveCapturedAssets(
     }
 
     const ext = inferFileExt(response.mimeType, response.url);
-    const filename = `asset-${String(index).padStart(2, "0")}${ext}`;
-    const filePath = path.join(assetDir, filename);
+    const baseName =
+      target.cleanupMode === "directory"
+        ? `asset-${String(index).padStart(2, "0")}`
+        : `${target.cleanupPrefix}${String(index).padStart(2, "0")}`;
+    let filename = `${baseName}${ext}`;
+    let suffix = 2;
+    while (usedNames.has(filename) || existingNames.has(filename)) {
+      filename = `${baseName}-${suffix}${ext}`;
+      suffix += 1;
+    }
+    const filePath = path.join(target.directory, filename);
     const bytes = Buffer.from(
       response.body,
       response.base64Encoded ? "base64" : "utf8",
     );
-    await mkdir(assetDir, { recursive: true });
+    await mkdir(target.directory, { recursive: true });
     tokenToPath.set(
       `__ASSET_${fileId}__`,
-      path.posix.join("assets", path.basename(assetDir), filename),
+      buildRelativeAssetPath(target.relativeDir, filename),
     );
+    usedNames.add(filename);
+    existingNames.add(filename);
     index += 1;
     await writeFile(filePath, bytes);
   }
@@ -336,15 +451,16 @@ export function buildConversationMarkdown(params: {
   ].join("\n");
 }
 
-export async function removeExistingArtifacts(
-  existingFilePath: string,
-  exportDir: string,
-) {
-  await rm(existingFilePath, { force: true });
-  const oldAssetDir = path.join(
-    exportDir,
-    "assets",
-    path.basename(existingFilePath, ".md"),
-  );
-  await rm(oldAssetDir, { recursive: true, force: true });
+function buildRelativeAssetPath(relativeDir: string, filename: string) {
+  if (!relativeDir || relativeDir === ".") {
+    return filename;
+  }
+  return path.posix.join(relativeDir, filename);
+}
+
+function toPosixPath(value: string) {
+  if (!value || value === ".") {
+    return ".";
+  }
+  return value.split(path.sep).join(path.posix.sep);
 }

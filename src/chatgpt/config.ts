@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { SyncBootstrapMode, SyncMode } from "./types";
+import type { AssetStrategy, SyncBootstrapMode, SyncMode } from "./types";
 
 export const DEFAULT_CDP_HTTP = "http://127.0.0.1:9222";
 export const DEFAULT_EXPORT_DIR = path.join(process.cwd(), "output");
@@ -10,6 +10,9 @@ export const DEFAULT_SYNC_DAYS = 14;
 export const DEFAULT_SYNC_OVERLAP_MINUTES = 60;
 export const DEFAULT_SYNC_BOOTSTRAP_COUNT = 50;
 export const DEFAULT_SYNC_BOOTSTRAP_DAYS = 14;
+export const DEFAULT_ASSET_STRATEGY: AssetStrategy = "fixed-folder";
+export const DEFAULT_ASSET_SUBDIR = "assets";
+export const DEFAULT_FIXED_ASSET_DIR = "assets";
 export const DEFAULT_INDEX_SCHEMA_VERSION = 1;
 export const DEFAULT_CONVERSATION_SCHEMA_VERSION = 1;
 export const DEFAULT_TIMEOUT_MS = 40_000;
@@ -32,18 +35,74 @@ function parseBootstrapMode(
   throw new Error(`Invalid CHATGPT_SYNC_BOOTSTRAP_MODE value: ${value}`);
 }
 
+function parseAssetStrategy(input: string | undefined): AssetStrategy {
+  const value = input?.trim();
+  if (!value) {
+    return DEFAULT_ASSET_STRATEGY;
+  }
+  if (
+    value === "vault-root" ||
+    value === "same-folder" ||
+    value === "current-folder-subfolder" ||
+    value === "fixed-folder"
+  ) {
+    return value;
+  }
+  throw new Error(`Invalid CHATGPT_SYNC_ASSET_STRATEGY value: ${value}`);
+}
+
+function resolveWorkspacePath(root: string, candidate: string) {
+  const absoluteRoot = path.resolve(root);
+  const absoluteCandidate = path.resolve(candidate);
+  const relative = path.relative(absoluteRoot, absoluteCandidate);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(
+      `Path must stay inside workspace: ${absoluteCandidate} is outside ${absoluteRoot}`,
+    );
+  }
+  return absoluteCandidate;
+}
+
+function resolveChildPath(root: string, candidate: string, fallback: string) {
+  const value = candidate.trim() || fallback;
+  const resolved = path.isAbsolute(value)
+    ? path.resolve(value)
+    : path.resolve(root, value);
+  return resolveWorkspacePath(root, resolved);
+}
+
 export function resolveConfig() {
-  const cdpHttp = process.env.CHATGPT_CDP_HTTP?.trim() || DEFAULT_CDP_HTTP;
-  const exportDir =
-    process.env.CHATGPT_EXPORT_DIR?.trim() || DEFAULT_EXPORT_DIR;
+  const cdpHttp =
+    process.env.CHATGPT_SYNC_CDP_HTTP?.trim() || DEFAULT_CDP_HTTP;
+  const workspaceDir =
+    process.env.CHATGPT_SYNC_WORKSPACE_DIR?.trim() || DEFAULT_EXPORT_DIR;
+  const inboxDir = resolveChildPath(
+    workspaceDir,
+    process.env.CHATGPT_SYNC_INBOX_DIR?.trim() || "",
+    ".",
+  );
+  const assetStrategy = parseAssetStrategy(
+    process.env.CHATGPT_SYNC_ASSET_STRATEGY,
+  );
+  const assetSubdir =
+    process.env.CHATGPT_SYNC_ASSET_SUBDIR?.trim() || DEFAULT_ASSET_SUBDIR;
+  const fixedAssetDir = resolveChildPath(
+    workspaceDir,
+    process.env.CHATGPT_SYNC_ASSET_FIXED_DIR?.trim() || "",
+    DEFAULT_FIXED_ASSET_DIR,
+  );
   const syncMode = (process.env.CHATGPT_SYNC_MODE?.trim() ||
     DEFAULT_SYNC_MODE) as SyncMode;
   const listLimit = parsePositiveInt(
-    process.env.CHATGPT_LIST_LIMIT,
+    process.env.CHATGPT_SYNC_LIST_LIMIT,
     DEFAULT_LIST_LIMIT,
   );
   const syncCount = parsePositiveInt(
-    process.env.CHATGPT_SYNC_COUNT ?? process.env.CHATGPT_EXPORT_LIMIT,
+    process.env.CHATGPT_SYNC_COUNT,
     DEFAULT_SYNC_COUNT,
   );
   const syncDays = parsePositiveInt(
@@ -65,11 +124,16 @@ export function resolveConfig() {
     process.env.CHATGPT_SYNC_BOOTSTRAP_DAYS,
     DEFAULT_SYNC_BOOTSTRAP_DAYS,
   );
-  const conversationId = process.env.CHATGPT_CONVERSATION_ID?.trim() || null;
+  const conversationId =
+    process.env.CHATGPT_SYNC_CONVERSATION_ID?.trim() || null;
 
   return {
     cdpHttp,
-    exportDir,
+    workspaceDir,
+    inboxDir,
+    assetStrategy,
+    assetSubdir,
+    fixedAssetDir,
     syncMode,
     listLimit,
     syncCount,

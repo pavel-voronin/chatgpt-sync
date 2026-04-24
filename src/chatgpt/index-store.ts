@@ -6,8 +6,8 @@ import type {
   ConversationSummary,
 } from "./types";
 
-export function indexFilePath(exportDir: string) {
-  return path.join(exportDir, "index.json");
+export function indexFilePath(workspaceDir: string) {
+  return path.join(workspaceDir, "index.json");
 }
 
 export function createEmptyIndex(): ChatgptIndex {
@@ -48,26 +48,14 @@ export async function saveChatgptIndex(filePath: string, index: ChatgptIndex) {
 
 export function buildConversationIndexRecord(params: {
   summary: ConversationSummary;
-  sourceUrl: string;
-  filePath: string;
-  assetDir: string;
   updatedAt: string | null;
-  status?: "pending" | "exported";
+  status?: ChatgptIndexRecord["status"];
 }): ChatgptIndexRecord {
-  const {
-    summary,
-    sourceUrl,
-    filePath,
-    assetDir,
-    updatedAt,
-  } = params;
+  const { summary, updatedAt } = params;
   return {
     summary,
     status: params.status || "exported",
     updated_at: updatedAt,
-    file_path: filePath,
-    asset_dir: assetDir,
-    source_url: sourceUrl,
   };
 }
 

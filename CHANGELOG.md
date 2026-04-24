@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0
+
+- refactor(chatgpt): drive sync from workspace files
+
 ## 0.3.1
 
 - refactor(chatgpt): remove redundant export metadata

@@ -1,4 +1,5 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import {
   connect,
   ensureSingleChatgptTab,
@@ -18,13 +19,18 @@ import type {
   ChatgptIndex,
   ChatgptIndexRecord,
   ConversationSummary,
+  ConversationSyncStatus,
 } from "./types";
-import { toIsoNow } from "./markdown";
+import { readExistingRecords, toIsoNow } from "./markdown";
 
 export async function apiMain() {
   const {
     cdpHttp,
-    exportDir,
+    workspaceDir,
+    inboxDir,
+    assetStrategy,
+    assetSubdir,
+    fixedAssetDir,
     syncMode,
     listLimit,
     syncCount,
@@ -36,8 +42,9 @@ export async function apiMain() {
     conversationId,
   } = resolveConfig();
 
-  await mkdir(exportDir, { recursive: true });
-  const indexPath = indexFilePath(exportDir);
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(inboxDir, { recursive: true });
+  const indexPath = indexFilePath(workspaceDir);
   const initialIndex = await loadChatgptIndex(indexPath);
 
   if (!initialIndex.watermark && !bootstrapMode) {
@@ -94,19 +101,20 @@ export async function apiMain() {
 
     if (conversationId) {
       const existing = initialIndex.conversations[conversationId];
+      const filesystem = await readExistingRecords(workspaceDir);
       const exportResult = await exportConversation({
         page,
         chatId: conversationId,
         chatHref: `https://chatgpt.com/c/${conversationId}`,
-        exportDir,
+        workspaceDir,
+        inboxDir,
+        assetStrategy,
+        assetSubdir,
+        fixedAssetDir,
         backendHeaders,
-        existingRecord: existing ? buildExistingRecord(existing) : undefined,
-        usedFileNames: new Set<string>(),
-        existingFileNames: new Set(
-          (await readdir(exportDir).catch(() => [])).filter((name) =>
-            name.endsWith(".md"),
-          ),
-        ),
+        existingRecord: filesystem.records.get(conversationId),
+        usedMarkdownPaths: new Set<string>(),
+        existingMarkdownPaths: filesystem.markdownPaths,
         titleHint: existing?.summary.title,
         exportStartedAt: toIsoNow(),
       });
@@ -120,9 +128,6 @@ export async function apiMain() {
             title: exportResult.title,
             update_time: existing?.summary.update_time,
           },
-          sourceUrl: exportResult.href,
-          filePath: exportResult.filePath,
-          assetDir: exportResult.assetDir,
           updatedAt: exportResult.updatedAt,
           status: "exported",
         }),
@@ -187,7 +192,11 @@ export async function apiMain() {
       page,
       index,
       indexPath,
-      exportDir,
+      workspaceDir,
+      inboxDir,
+      assetStrategy,
+      assetSubdir,
+      fixedAssetDir,
       backendHeaders,
     });
 
@@ -208,15 +217,20 @@ function applyConversationScan(
     const shouldMarkPending =
       !existing ||
       existing.status === "pending" ||
-      isNewerTimestamp(summary.update_time || null, existing.summary.update_time || null);
+      isNewerTimestamp(
+        summary.update_time || null,
+        existing.summary.update_time || null,
+      );
+
+    const nextStatus = resolveConversationStatus(
+      existing?.status,
+      shouldMarkPending,
+    );
 
     index.conversations[summary.id] = buildConversationIndexRecord({
       summary,
-      sourceUrl: `https://chatgpt.com/c/${summary.id}`,
-      filePath: existing?.file_path || "",
-      assetDir: existing?.asset_dir || "",
       updatedAt: existing?.updated_at ?? null,
-      status: shouldMarkPending ? "pending" : "exported",
+      status: nextStatus,
     });
   }
 }
@@ -225,15 +239,15 @@ async function exportPendingConversations(params: {
   page: Awaited<ReturnType<typeof connect>>;
   index: ChatgptIndex;
   indexPath: string;
-  exportDir: string;
+  workspaceDir: string;
+  inboxDir: string;
+  assetStrategy: ReturnType<typeof resolveConfig>["assetStrategy"];
+  assetSubdir: string;
+  fixedAssetDir: string;
   backendHeaders: Record<string, string>;
 }) {
-  const usedFileNames = new Set<string>();
-  const existingFileNames = new Set(
-    (await readdir(params.exportDir).catch(() => [])).filter((name) =>
-      name.endsWith(".md"),
-    ),
-  );
+  const filesystem = await readExistingRecords(params.workspaceDir);
+  const usedMarkdownPaths = new Set<string>();
   const exported: Array<{
     title: string;
     filePath: string;
@@ -245,11 +259,33 @@ async function exportPendingConversations(params: {
   const pending = Object.entries(params.index.conversations)
     .filter(([, record]) => record.status === "pending")
     .sort(([, left], [, right]) =>
-      compareTimestampDesc(left.summary.update_time || null, right.summary.update_time || null),
+      compareTimestampDesc(
+        left.summary.update_time || null,
+        right.summary.update_time || null,
+      ),
     );
 
   for (const [chatId, record] of pending) {
-    const chatHref = record.source_url || `https://chatgpt.com/c/${chatId}`;
+    const existingRecord = filesystem.records.get(chatId);
+    if (
+      !existingRecord &&
+      record.status === "pending" &&
+      wasPreviouslyExported(record)
+    ) {
+      upsertConversationIndex(
+        params.index,
+        chatId,
+        buildConversationIndexRecord({
+          summary: record.summary,
+          updatedAt: record.updated_at,
+          status: "removed",
+        }),
+      );
+      await saveChatgptIndex(params.indexPath, params.index);
+      continue;
+    }
+
+    const chatHref = `https://chatgpt.com/c/${chatId}`;
     const startedAt = toIsoNow();
     console.log(`[export] ${record.summary.title}`);
 
@@ -257,11 +293,15 @@ async function exportPendingConversations(params: {
       page: params.page,
       chatId,
       chatHref,
-      exportDir: params.exportDir,
+      workspaceDir: params.workspaceDir,
+      inboxDir: params.inboxDir,
+      assetStrategy: params.assetStrategy,
+      assetSubdir: params.assetSubdir,
+      fixedAssetDir: params.fixedAssetDir,
       backendHeaders: params.backendHeaders,
-      existingRecord: buildExistingRecord(record),
-      usedFileNames,
-      existingFileNames,
+      existingRecord,
+      usedMarkdownPaths,
+      existingMarkdownPaths: filesystem.markdownPaths,
       titleHint: record.summary.title,
       exportStartedAt: startedAt,
     });
@@ -274,9 +314,6 @@ async function exportPendingConversations(params: {
           ...record.summary,
           title: exportResult.title,
         },
-        sourceUrl: exportResult.href,
-        filePath: exportResult.filePath,
-        assetDir: exportResult.assetDir,
         updatedAt: exportResult.updatedAt,
         status: "exported",
       }),
@@ -293,22 +330,17 @@ async function exportPendingConversations(params: {
     console.log(
       `[done] ${exportResult.title} turns=${exportResult.turns} assets=${exportResult.assets}`,
     );
+    filesystem.records.set(chatId, {
+      filePath: path.resolve(exportResult.filePath),
+      frontmatter: {
+        conversation_id: chatId,
+        updated_at: exportResult.updatedAt,
+      },
+    });
+    filesystem.markdownPaths.add(path.resolve(exportResult.filePath));
   }
 
   return exported;
-}
-
-function buildExistingRecord(record: ChatgptIndexRecord) {
-  if (!record.file_path) {
-    return undefined;
-  }
-
-  return {
-    filePath: record.file_path,
-    frontmatter: {
-      updated_at: record.updated_at || "",
-    },
-  };
 }
 
 function isNewerTimestamp(current: string | null, previous: string | null) {
@@ -336,4 +368,18 @@ function compareTimestampDesc(left: string | null, right: string | null) {
     ? new Date(right).getTime()
     : Number.NEGATIVE_INFINITY;
   return rightTime - leftTime;
+}
+
+function resolveConversationStatus(
+  currentStatus: ConversationSyncStatus | undefined,
+  shouldMarkPending: boolean,
+): ConversationSyncStatus {
+  if (currentStatus === "removed") {
+    return "removed";
+  }
+  return shouldMarkPending ? "pending" : "exported";
+}
+
+function wasPreviouslyExported(record: ChatgptIndexRecord) {
+  return record.status === "exported" || record.updated_at !== null;
 }
