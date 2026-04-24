@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+
+- fix(chatgpt): render current conversation branch and canvas textdoc updates
+
 ## 0.8.0
 
 - feat(chatgpt): render citation, entity, nav list, and source annotations as Markdown

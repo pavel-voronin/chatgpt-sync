@@ -43,6 +43,7 @@ export type AssetStrategy =
 export type ApiConversation = {
   title?: string;
   mapping?: Record<string, unknown>;
+  current_node?: string;
 };
 
 export type ChatgptIndex = {

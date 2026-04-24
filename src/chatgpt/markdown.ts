@@ -141,7 +141,7 @@ export function inferFileExt(contentType: string | null, src: string): string {
 
 export function isHiddenConversationNode(node: {
   message?: {
-    author?: { role?: string };
+    author?: { role?: string; name?: string | null };
     recipient?: string;
     content?: { content_type?: string };
     metadata?: Record<string, unknown>;
@@ -155,6 +155,21 @@ export function isHiddenConversationNode(node: {
     return true;
   }
   if (recipient === "api_tool.call_tool") {
+    return true;
+  }
+  if (
+    ["canmore.create_textdoc", "canmore.update_textdoc"].includes(recipient)
+  ) {
+    return true;
+  }
+  if (
+    role === "tool" &&
+    [
+      "api_tool.call_tool",
+      "canmore.create_textdoc",
+      "canmore.update_textdoc",
+    ].includes(node.message?.author?.name || "")
+  ) {
     return true;
   }
   if (["system", "user_editable_context"].includes(role)) {
@@ -269,9 +284,7 @@ function renderAnnotatedText(
       markdown: renderContentReferenceMarkdown(reference),
     }))
     .filter(
-      (
-        replacement,
-      ): replacement is { matchedText: string; markdown: string } =>
+      (replacement): replacement is { matchedText: string; markdown: string } =>
         typeof replacement.matchedText === "string" &&
         replacement.matchedText.trim().length > 0 &&
         typeof replacement.markdown === "string",
@@ -450,6 +463,8 @@ export function renderConversationMarkdownFromApi(
   };
 
   const blocks: Array<{ role: string; markdown: string }> = [];
+  const canvasTextdocs = new Map<string, string>();
+  let activeCanvasTextdocId: string | null = null;
 
   const visit = (node: any) => {
     if (!node) {
@@ -457,10 +472,21 @@ export function renderConversationMarkdownFromApi(
     }
 
     const message = node.message;
+    const canvasMarkdown = message
+      ? renderCanvasTextdocMarkdown(message, {
+          textdocs: canvasTextdocs,
+          activeTextdocId: activeCanvasTextdocId,
+          setActiveTextdocId: (textdocId) => {
+            activeCanvasTextdocId = textdocId;
+          },
+        })
+      : "";
     const deepResearchMarkdown = message
       ? renderDeepResearchMarkdown(message, recordAsset, options)
       : "";
-    if (deepResearchMarkdown) {
+    if (canvasMarkdown) {
+      blocks.push({ role: "Assistant", markdown: canvasMarkdown });
+    } else if (deepResearchMarkdown) {
       blocks.push({ role: "Assistant", markdown: deepResearchMarkdown });
     } else if (message && !isHiddenConversationNode(node)) {
       const role = message.author?.role || "assistant";
@@ -503,19 +529,178 @@ export function renderConversationMarkdownFromApi(
         blocks.push({ role: roleLabel, markdown });
       }
     }
-
-    for (const childId of node.children || []) {
-      visit(mapping[childId]);
-    }
   };
 
-  visit(root);
+  for (const node of currentConversationPath(conversation, root)) {
+    visit(node);
+  }
 
   return {
     title: conversation?.title || "",
     blocks,
     assetIds,
   };
+}
+
+function currentConversationPath(conversation: ApiConversation, root: unknown) {
+  const mapping = conversation?.mapping || {};
+  const currentNodeId = conversation.current_node;
+  const pathNodes: unknown[] = [];
+  const seen = new Set<string>();
+
+  let cursor =
+    typeof currentNodeId === "string" ? mapping[currentNodeId] : null;
+  while (cursor && typeof cursor === "object") {
+    const typed = cursor as { id?: string; parent?: string | null };
+    if (!typed.id || seen.has(typed.id)) {
+      break;
+    }
+    seen.add(typed.id);
+    pathNodes.push(cursor);
+    cursor = typed.parent ? mapping[typed.parent] : null;
+  }
+
+  if (pathNodes.length > 0) {
+    return pathNodes.reverse();
+  }
+
+  const fallbackNodes: unknown[] = [];
+  const visit = (node: any) => {
+    if (!node) {
+      return;
+    }
+    fallbackNodes.push(node);
+    for (const childId of node.children || []) {
+      visit(mapping[childId]);
+    }
+  };
+  visit(root);
+  return fallbackNodes;
+}
+
+function renderCanvasTextdocMarkdown(
+  message: any,
+  state: {
+    textdocs: Map<string, string>;
+    activeTextdocId: string | null;
+    setActiveTextdocId: (textdocId: string) => void;
+  },
+): string {
+  const content = message.content || {};
+  const raw = extractRawTextContent(content);
+  if (typeof raw !== "string") {
+    return "";
+  }
+
+  if (message?.recipient === "canmore.create_textdoc") {
+    return renderCreatedCanvasTextdoc(raw, state);
+  }
+
+  if (message?.recipient === "canmore.update_textdoc") {
+    return renderUpdatedCanvasTextdoc(raw, state);
+  }
+
+  return "";
+}
+
+function renderCreatedCanvasTextdoc(
+  raw: string,
+  state: {
+    textdocs: Map<string, string>;
+    setActiveTextdocId: (textdocId: string) => void;
+  },
+): string {
+  try {
+    const parsed = JSON.parse(raw) as {
+      name?: string;
+      type?: string;
+      content?: unknown;
+    };
+    if (parsed.type === "document" && typeof parsed.content === "string") {
+      const textdocId = parsed.name || "__default__";
+      state.textdocs.set(textdocId, parsed.content);
+      state.setActiveTextdocId(textdocId);
+      return normalizeText(parsed.content);
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+function renderUpdatedCanvasTextdoc(
+  raw: string,
+  state: {
+    textdocs: Map<string, string>;
+    activeTextdocId: string | null;
+    setActiveTextdocId: (textdocId: string) => void;
+  },
+): string {
+  const activeTextdocId =
+    state.activeTextdocId || Array.from(state.textdocs.keys()).at(-1);
+  if (!activeTextdocId) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      updates?: Array<{
+        pattern?: unknown;
+        multiple?: unknown;
+        replacement?: unknown;
+      }>;
+    };
+    if (!Array.isArray(parsed.updates)) {
+      return "";
+    }
+
+    let nextContent = state.textdocs.get(activeTextdocId) || "";
+    for (const update of parsed.updates) {
+      if (
+        typeof update.pattern !== "string" ||
+        typeof update.replacement !== "string"
+      ) {
+        continue;
+      }
+      nextContent = applyCanvasTextdocUpdate(nextContent, {
+        pattern: update.pattern,
+        replacement: update.replacement,
+        multiple: update.multiple === true,
+      });
+    }
+
+    state.textdocs.set(activeTextdocId, nextContent);
+    state.setActiveTextdocId(activeTextdocId);
+    return normalizeText(nextContent);
+  } catch {
+    return "";
+  }
+}
+
+function extractRawTextContent(content: any): string {
+  if (typeof content?.text === "string") {
+    return content.text;
+  }
+
+  const parts = Array.isArray(content?.parts) ? content.parts : [];
+  const raw = parts.find((part: unknown) => typeof part === "string");
+  return typeof raw === "string" ? raw : "";
+}
+
+function applyCanvasTextdocUpdate(
+  content: string,
+  update: { pattern: string; replacement: string; multiple: boolean },
+): string {
+  try {
+    const flags = update.multiple ? "gs" : "s";
+    const pattern = new RegExp(update.pattern, flags);
+    return content.replace(pattern, () => update.replacement);
+  } catch {
+    return update.multiple
+      ? content.split(update.pattern).join(update.replacement)
+      : content.replace(update.pattern, update.replacement);
+  }
 }
 
 function renderDeepResearchMarkdown(
