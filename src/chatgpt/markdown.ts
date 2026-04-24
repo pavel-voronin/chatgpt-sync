@@ -184,7 +184,7 @@ export function renderPartMarkdown(
   options: { renderUnknownPartsAsJson?: boolean } = {},
 ): string {
   if (typeof part === "string") {
-    return normalizeText(part);
+    return normalizeText(renderAnnotatedText(part, metadata));
   }
 
   if (!part || typeof part !== "object") {
@@ -220,7 +220,7 @@ export function renderPartMarkdown(
   }
 
   if (typeof typed.text === "string") {
-    return normalizeText(typed.text);
+    return normalizeText(renderAnnotatedText(typed.text, metadata));
   }
 
   if (options.renderUnknownPartsAsJson) {
@@ -228,6 +228,205 @@ export function renderPartMarkdown(
   }
 
   return "";
+}
+
+type ContentReference = {
+  matched_text?: string;
+  type?: string;
+  alt?: string;
+  prompt_text?: string;
+  name?: string;
+  title?: string | null;
+  items?: Array<{
+    title?: string | null;
+    url?: string | null;
+    attribution?: string | null;
+    supporting_websites?: Array<{
+      title?: string | null;
+      url?: string | null;
+      attribution?: string | null;
+    }> | null;
+  }> | null;
+  sources?: Array<{
+    title?: string | null;
+    url?: string | null;
+    attribution?: string | null;
+  }> | null;
+};
+
+function renderAnnotatedText(
+  text: string,
+  metadata: Record<string, unknown>,
+): string {
+  let rendered = text;
+  const references = Array.isArray(metadata.content_references)
+    ? (metadata.content_references as ContentReference[])
+    : [];
+
+  const replacements = references
+    .map((reference) => ({
+      matchedText: reference.matched_text,
+      markdown: renderContentReferenceMarkdown(reference),
+    }))
+    .filter(
+      (
+        replacement,
+      ): replacement is { matchedText: string; markdown: string } =>
+        typeof replacement.matchedText === "string" &&
+        replacement.matchedText.trim().length > 0 &&
+        typeof replacement.markdown === "string",
+    )
+    .sort((a, b) => b.matchedText.length - a.matchedText.length);
+
+  for (const { matchedText, markdown } of replacements) {
+    rendered = rendered.split(matchedText).join(markdown);
+  }
+
+  const sourceFootnote = references.find(
+    (reference) =>
+      reference.type === "sources_footnote" &&
+      (!reference.matched_text || reference.matched_text.trim().length === 0),
+  );
+  const sourceFootnoteMarkdown = sourceFootnote
+    ? renderSourcesFootnoteMarkdown(sourceFootnote)
+    : "";
+  if (sourceFootnoteMarkdown && !rendered.includes(sourceFootnoteMarkdown)) {
+    rendered = `${rendered.trimEnd()}\n\n${sourceFootnoteMarkdown}`;
+  }
+
+  return stripPrivateUseAnnotations(rendered);
+}
+
+function renderContentReferenceMarkdown(
+  reference: ContentReference,
+): string | null {
+  if (reference.type === "entity") {
+    return reference.name || reference.alt || reference.prompt_text || "";
+  }
+
+  if (reference.type === "nav_list") {
+    return renderNavListMarkdown(reference);
+  }
+
+  if (reference.type === "sources_footnote") {
+    return renderSourcesFootnoteMarkdown(reference);
+  }
+
+  if (reference.alt) {
+    return reference.alt;
+  }
+
+  const links = extractContentReferenceLinks(reference);
+  if (links.length === 0) {
+    return "";
+  }
+
+  return renderInlineLinkList(links);
+}
+
+function renderNavListMarkdown(reference: ContentReference): string {
+  const links = extractContentReferenceLinks(reference);
+  if (links.length === 0) {
+    return "";
+  }
+
+  const title = extractNavListTitle(reference.matched_text || "");
+  const body = links
+    .map((link) => `- ${renderMarkdownLink(link.label, link.url)}`)
+    .join("\n");
+  return title ? `### ${title}\n\n${body}` : body;
+}
+
+function renderSourcesFootnoteMarkdown(reference: ContentReference): string {
+  const links = extractContentReferenceLinks(reference);
+  if (links.length === 0) {
+    return "";
+  }
+
+  return `## Sources\n\n${links
+    .map((link) => `- ${renderMarkdownLink(link.label, link.url)}`)
+    .join("\n")}`;
+}
+
+function extractContentReferenceLinks(reference: ContentReference) {
+  const links: Array<{ label: string; url: string }> = [];
+
+  const addLink = (
+    item?: {
+      title?: string | null;
+      url?: string | null;
+      attribution?: string | null;
+    } | null,
+  ) => {
+    const url = item?.url;
+    if (!url || links.some((link) => link.url === url)) {
+      return;
+    }
+    links.push({
+      label: item.title || item.attribution || readableUrlLabel(url),
+      url,
+    });
+  };
+
+  for (const item of reference.items || []) {
+    addLink(item);
+    for (const supporting of item.supporting_websites || []) {
+      addLink(supporting);
+    }
+  }
+
+  for (const source of reference.sources || []) {
+    addLink(source);
+  }
+
+  return links;
+}
+
+function renderInlineLinkList(links: Array<{ label: string; url: string }>) {
+  return `(${links
+    .map((link) => renderMarkdownLink(link.label, link.url))
+    .join(", ")})`;
+}
+
+function renderMarkdownLink(label: string, url: string): string {
+  return `[${escapeMarkdownLinkText(label)}](${url.replace(/\)/g, "%29")})`;
+}
+
+function escapeMarkdownLinkText(label: string): string {
+  return label.replace(/\\/g, "\\\\").replace(/]/g, "\\]");
+}
+
+function readableUrlLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function extractNavListTitle(matchedText: string): string {
+  const match = matchedText.match(/^\uE200navlist\uE202(.+?)\uE202/);
+  return match ? match[1].trim() : "";
+}
+
+function stripPrivateUseAnnotations(text: string): string {
+  return text
+    .replace(
+      /\uE200entity\uE202(\[[^\uE000-\uF8FF]*\])\uE201/g,
+      (_, rawJson: string) => {
+        try {
+          const parsed = JSON.parse(rawJson) as unknown;
+          return Array.isArray(parsed) && typeof parsed[1] === "string"
+            ? parsed[1]
+            : "";
+        } catch {
+          return "";
+        }
+      },
+    )
+    .replace(/\uE200cite(?:\uE202[^\uE000-\uF8FF]+)+\uE201/g, "")
+    .replace(/\uE200navlist(?:\uE202[^\uE000-\uF8FF]+)+\uE201/g, "")
+    .replace(/[\uE200-\uE202]/g, "");
 }
 
 export function renderConversationMarkdownFromApi(

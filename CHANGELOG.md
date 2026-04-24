@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0
+
+- feat(chatgpt): render citation, entity, nav list, and source annotations as Markdown
+
 ## 0.7.0
 
 - feat(chatgpt): render Deep Research reports from embedded widget state
