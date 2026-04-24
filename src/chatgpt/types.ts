@@ -45,11 +45,8 @@ export type ChatgptIndex = {
 export type ChatgptIndexRecord = {
   summary: ConversationSummary;
   status: "pending" | "exported";
-  source_update_time: string | null;
-  exported_at: string | null;
   updated_at: string | null;
   file_path: string;
   asset_dir: string;
   source_url: string;
-  asset_count: number;
 };

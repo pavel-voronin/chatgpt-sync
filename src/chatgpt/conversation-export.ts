@@ -37,7 +37,6 @@ export type ConversationExportOutput = {
   turns: number;
   assets: number;
   summary: ConversationSummary;
-  exportedAt: string;
   updatedAt: string;
 };
 
@@ -158,13 +157,10 @@ export async function exportConversation(
     })
     .join("\n\n");
 
-  const exportedAt =
-    input.existingRecord?.frontmatter.exported_at || exportStartedAt;
   const nextContent = buildConversationMarkdown({
     title,
     conversationId: input.chatId,
     href: input.chatHref,
-    exportedAt,
     updatedAt: exportStartedAt,
     messageBlocks,
   });
@@ -202,7 +198,6 @@ export async function exportConversation(
       create_time: undefined,
       update_time: undefined,
     },
-    exportedAt,
     updatedAt: exportStartedAt,
   };
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- refactor(chatgpt): remove redundant export metadata
+
 ## 0.3.0
 
 - fix: enable headless Chrome for sync startup

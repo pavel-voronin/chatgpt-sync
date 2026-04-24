@@ -317,18 +317,15 @@ export function buildConversationMarkdown(params: {
   title: string;
   conversationId: string;
   href: string;
-  exportedAt: string;
   updatedAt: string;
   messageBlocks: string;
 }) {
-  const { title, conversationId, href, exportedAt, updatedAt, messageBlocks } =
-    params;
+  const { title, conversationId, href, updatedAt, messageBlocks } = params;
   return [
     "---",
     `title: ${escapeFrontmatter(title)}`,
     `conversation_id: ${escapeFrontmatter(conversationId)}`,
     `source_url: ${escapeFrontmatter(href)}`,
-    `exported_at: ${escapeFrontmatter(exportedAt)}`,
     `updated_at: ${escapeFrontmatter(updatedAt)}`,
     "---",
     "",

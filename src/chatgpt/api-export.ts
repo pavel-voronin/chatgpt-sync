@@ -123,13 +123,7 @@ export async function apiMain() {
           sourceUrl: exportResult.href,
           filePath: exportResult.filePath,
           assetDir: exportResult.assetDir,
-          sourceUpdateTime:
-            existing?.source_update_time ??
-            existing?.summary.update_time ??
-            null,
-          exportedAt: exportResult.exportedAt,
           updatedAt: exportResult.updatedAt,
-          assetCount: exportResult.assets,
           status: "exported",
         }),
       );
@@ -211,21 +205,17 @@ function applyConversationScan(
 ) {
   for (const summary of items) {
     const existing = index.conversations[summary.id];
-    const sourceUpdateTime = normalizeSourceUpdateTime(summary);
     const shouldMarkPending =
       !existing ||
       existing.status === "pending" ||
-      isNewerTimestamp(sourceUpdateTime, existing.source_update_time);
+      isNewerTimestamp(summary.update_time || null, existing.summary.update_time || null);
 
     index.conversations[summary.id] = buildConversationIndexRecord({
       summary,
       sourceUrl: `https://chatgpt.com/c/${summary.id}`,
       filePath: existing?.file_path || "",
       assetDir: existing?.asset_dir || "",
-      sourceUpdateTime,
-      exportedAt: existing?.exported_at ?? null,
       updatedAt: existing?.updated_at ?? null,
-      assetCount: existing?.asset_count ?? 0,
       status: shouldMarkPending ? "pending" : "exported",
     });
   }
@@ -255,7 +245,7 @@ async function exportPendingConversations(params: {
   const pending = Object.entries(params.index.conversations)
     .filter(([, record]) => record.status === "pending")
     .sort(([, left], [, right]) =>
-      compareTimestampDesc(left.source_update_time, right.source_update_time),
+      compareTimestampDesc(left.summary.update_time || null, right.summary.update_time || null),
     );
 
   for (const [chatId, record] of pending) {
@@ -287,12 +277,7 @@ async function exportPendingConversations(params: {
         sourceUrl: exportResult.href,
         filePath: exportResult.filePath,
         assetDir: exportResult.assetDir,
-        sourceUpdateTime:
-          record.source_update_time ??
-          normalizeSourceUpdateTime(record.summary),
-        exportedAt: exportResult.exportedAt,
         updatedAt: exportResult.updatedAt,
-        assetCount: exportResult.assets,
         status: "exported",
       }),
     );
@@ -321,14 +306,9 @@ function buildExistingRecord(record: ChatgptIndexRecord) {
   return {
     filePath: record.file_path,
     frontmatter: {
-      exported_at: record.exported_at || "",
       updated_at: record.updated_at || "",
     },
   };
-}
-
-function normalizeSourceUpdateTime(summary: ConversationSummary) {
-  return summary.update_time || null;
 }
 
 function isNewerTimestamp(current: string | null, previous: string | null) {

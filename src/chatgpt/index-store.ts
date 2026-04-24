@@ -51,10 +51,7 @@ export function buildConversationIndexRecord(params: {
   sourceUrl: string;
   filePath: string;
   assetDir: string;
-  sourceUpdateTime: string | null;
-  exportedAt: string | null;
   updatedAt: string | null;
-  assetCount: number;
   status?: "pending" | "exported";
 }): ChatgptIndexRecord {
   const {
@@ -62,21 +59,15 @@ export function buildConversationIndexRecord(params: {
     sourceUrl,
     filePath,
     assetDir,
-    sourceUpdateTime,
-    exportedAt,
     updatedAt,
-    assetCount,
   } = params;
   return {
     summary,
     status: params.status || "exported",
-    source_update_time: sourceUpdateTime,
-    exported_at: exportedAt,
     updated_at: updatedAt,
     file_path: filePath,
     asset_dir: assetDir,
     source_url: sourceUrl,
-    asset_count: assetCount,
   };
 }
 
