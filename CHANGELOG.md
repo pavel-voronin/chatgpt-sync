@@ -3,6 +3,7 @@
 ## 0.4.0
 
 - refactor(chatgpt): drive sync from workspace files
+- docs(readme): document sync environment settings
 
 ## 0.3.1
 
