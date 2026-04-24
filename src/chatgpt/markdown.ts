@@ -142,14 +142,19 @@ export function inferFileExt(contentType: string | null, src: string): string {
 export function isHiddenConversationNode(node: {
   message?: {
     author?: { role?: string };
+    recipient?: string;
     content?: { content_type?: string };
     metadata?: Record<string, unknown>;
   };
 }) {
   const role = node.message?.author?.role || "";
+  const recipient = node.message?.recipient || "";
   const contentType = node.message?.content?.content_type || "";
   const metadata = node.message?.metadata || {};
   if (metadata.is_visually_hidden_from_conversation) {
+    return true;
+  }
+  if (recipient === "api_tool.call_tool") {
     return true;
   }
   if (["system", "user_editable_context"].includes(role)) {
@@ -253,7 +258,12 @@ export function renderConversationMarkdownFromApi(
     }
 
     const message = node.message;
-    if (message && !isHiddenConversationNode(node)) {
+    const deepResearchMarkdown = message
+      ? renderDeepResearchMarkdown(message, recordAsset, options)
+      : "";
+    if (deepResearchMarkdown) {
+      blocks.push({ role: "Assistant", markdown: deepResearchMarkdown });
+    } else if (message && !isHiddenConversationNode(node)) {
       const role = message.author?.role || "assistant";
       const content = message.content || {};
       const parts = Array.isArray(content.parts) ? content.parts : [];
@@ -307,6 +317,49 @@ export function renderConversationMarkdownFromApi(
     blocks,
     assetIds,
   };
+}
+
+function renderDeepResearchMarkdown(
+  message: any,
+  recordAsset: (fileId: string) => string,
+  options: { renderUnknownPartsAsJson?: boolean },
+): string {
+  const sdk = message?.metadata?.chatgpt_sdk;
+  if (!sdk || typeof sdk !== "object") {
+    return "";
+  }
+
+  const isDeepResearch =
+    sdk.html_asset_pointer === "internal://deep-research" ||
+    String(sdk.resolved_pineapple_uri || "").includes(
+      "connector_openai_deep_research",
+    );
+  if (!isDeepResearch || typeof sdk.widget_state !== "string") {
+    return "";
+  }
+
+  let widgetState: any;
+  try {
+    widgetState = JSON.parse(sdk.widget_state);
+  } catch {
+    return "";
+  }
+
+  const reportMessage = widgetState?.report_message;
+  if (!reportMessage || isHiddenConversationNode({ message: reportMessage })) {
+    return "";
+  }
+
+  const content = reportMessage.content || {};
+  const parts = Array.isArray(content.parts) ? content.parts : [];
+  const metadata = reportMessage.metadata || {};
+  return parts
+    .map((part: unknown) =>
+      renderPartMarkdown(part, recordAsset, metadata, options),
+    )
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
 }
 
 export type AssetWriteTarget = {

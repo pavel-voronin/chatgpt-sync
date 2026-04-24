@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+
+- feat(chatgpt): render Deep Research reports from embedded widget state
+- docs: document a count bootstrap example
+
 ## 0.6.0
 
 - feat(chatgpt): optionally dump raw conversation JSON next to Markdown
