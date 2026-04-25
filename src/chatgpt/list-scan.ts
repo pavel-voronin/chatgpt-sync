@@ -87,8 +87,6 @@ export async function planConversationSummaries(
     watermark: params.watermark,
     bootstrapDays: params.bootstrapDays,
   });
-  const fallbackTargetCount = countLimit;
-
   let offset = 0;
   let selectedCount = 0;
   let scannedPages = 0;
@@ -106,7 +104,7 @@ export async function planConversationSummaries(
       params.requestHeaders,
     );
     scannedPages += 1;
-    const targetCount = fallbackTargetCount ?? response.total ?? null;
+    const targetCount = countLimit;
     const pageItems = response.items || [];
     if (pageItems.length === 0) {
       stopReason = "empty-page";

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.3
+
+- fix(chatgpt): omit scan progress bar when target count is unknown
+
 ## 0.11.2
 
 - fix(chatgpt): capture complete backend headers before scanning
