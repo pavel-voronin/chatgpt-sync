@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.2
+
+- fix(chatgpt): capture complete backend headers before scanning
+
 ## 0.11.1
 
 - fix(chatgpt): support unlimited export batches and progress logs

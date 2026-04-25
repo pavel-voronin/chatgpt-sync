@@ -377,20 +377,31 @@ function compareIso(a: string, b: string) {
 }
 
 function normalizeConversationListHeaders(headers: Record<string, string>) {
-  return {
-    authorization: headers.authorization || headers.Authorization || "",
-    "oai-client-build-number":
-      headers["oai-client-build-number"] ||
-      headers["OAI-CLIENT-BUILD-NUMBER"] ||
-      "",
-    "oai-client-version":
-      headers["oai-client-version"] || headers["OAI-CLIENT-VERSION"] || "",
-    "oai-device-id": headers["oai-device-id"] || headers["OAI-DEVICE-ID"] || "",
-    "oai-language": headers["oai-language"] || headers["OAI-LANGUAGE"] || "",
-    "oai-session-id":
-      headers["oai-session-id"] || headers["OAI-SESSION-ID"] || "",
+  return omitEmptyHeaders({
+    authorization: getHeader(headers, "authorization"),
+    "oai-client-build-number": getHeader(headers, "oai-client-build-number"),
+    "oai-client-version": getHeader(headers, "oai-client-version"),
+    "oai-device-id": getHeader(headers, "oai-device-id"),
+    "oai-language": getHeader(headers, "oai-language"),
+    "oai-session-id": getHeader(headers, "oai-session-id"),
     "x-openai-target-path": "/backend-api/conversations",
     "x-openai-target-route": "/backend-api/conversations",
     referer: "https://chatgpt.com/",
-  };
+  });
+}
+
+function getHeader(headers: Record<string, string>, name: string) {
+  const lowerName = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lowerName && value) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function omitEmptyHeaders(headers: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([, value]) => value !== ""),
+  );
 }

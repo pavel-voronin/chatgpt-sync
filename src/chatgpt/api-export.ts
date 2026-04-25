@@ -88,18 +88,34 @@ export async function apiMain() {
   await initializeChatgptSession(page);
 
   let backendHeaders: Record<string, string> | null = null;
-  const offHeaders = page.on("Network.requestWillBeSentExtraInfo", (params) => {
-    if (backendHeaders) {
+  const backendRequestIds = new Set<string>();
+  const offRequests = page.on("Network.requestWillBeSent", (params) => {
+    const requestId = String(params.requestId ?? "");
+    const request = params.request as
+      | { url?: string; headers?: Record<string, string> }
+      | undefined;
+    if (!requestId || !isBackendApiUrl(request?.url || "")) {
       return;
     }
+    backendRequestIds.add(requestId);
+    backendHeaders = mergeHeaders(backendHeaders, request?.headers);
+  });
+  const offHeaders = page.on("Network.requestWillBeSentExtraInfo", (params) => {
     const headers = params.headers as Record<string, string> | undefined;
+    if (!headers) {
+      return;
+    }
+    const requestId = String(params.requestId ?? "");
     const targetPath = String(
       headers?.["x-openai-target-path"] ||
         headers?.["X-OpenAI-Target-Path"] ||
         "",
     );
-    if (headers && targetPath.startsWith("/backend-api/")) {
-      backendHeaders = headers;
+    if (
+      backendRequestIds.has(requestId) ||
+      targetPath.startsWith("/backend-api/")
+    ) {
+      backendHeaders = mergeHeaders(backendHeaders, headers);
     }
   });
 
@@ -108,9 +124,11 @@ export async function apiMain() {
       page,
       initialUrl: tab.url,
       timeoutMs: backendHeadersTimeoutMs,
-      getBackendHeaders: () => backendHeaders,
+      getBackendHeaders: () =>
+        hasBackendHeaderContext(backendHeaders) ? backendHeaders : null,
     });
-    if (!backendHeaders) {
+    const capturedBackendHeaders = backendHeaders;
+    if (!hasBackendHeaderContext(capturedBackendHeaders)) {
       throw new Error(
         "Could not capture backend API headers from the active browser tab",
       );
@@ -129,7 +147,7 @@ export async function apiMain() {
         assetStrategy,
         assetSubdir,
         fixedAssetDir,
-        backendHeaders,
+        backendHeaders: capturedBackendHeaders,
         existingRecord: filesystem.records.get(conversationId),
         usedMarkdownPaths: new Set<string>(),
         existingMarkdownPaths: filesystem.markdownPaths,
@@ -176,7 +194,7 @@ export async function apiMain() {
       bootstrapDays,
       pageDelayMs: listPageDelayMs,
       pageJitterMs: listPageJitterMs,
-      requestHeaders: backendHeaders,
+      requestHeaders: capturedBackendHeaders,
       onPageItems: async (items) => {
         applyConversationScan(initialIndex, items);
         await saveChatgptIndex(indexPath, initialIndex);
@@ -218,7 +236,7 @@ export async function apiMain() {
       assetStrategy,
       assetSubdir,
       fixedAssetDir,
-      backendHeaders,
+      backendHeaders: capturedBackendHeaders,
       renderUnknownPartsAsJson,
       dumpRawConversationJson,
       batchLimit: exportBatchLimit,
@@ -232,9 +250,58 @@ export async function apiMain() {
     }
     throw error;
   } finally {
+    offRequests();
     offHeaders();
     page.close();
   }
+}
+
+function isBackendApiUrl(url: string) {
+  try {
+    const parsed = new URL(url, "https://chatgpt.com");
+    return (
+      parsed.hostname.endsWith("chatgpt.com") &&
+      parsed.pathname.startsWith("/backend-api/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function mergeHeaders(
+  current: Record<string, string> | null,
+  next: Record<string, string> | undefined,
+) {
+  if (!next) {
+    return current;
+  }
+  return {
+    ...(current || {}),
+    ...next,
+  };
+}
+
+function hasBackendHeaderContext(
+  headers: Record<string, string> | null,
+): headers is Record<string, string> {
+  if (!headers) {
+    return false;
+  }
+  return Boolean(
+    getHeader(headers, "cookie") &&
+    getHeader(headers, "authorization") &&
+    getHeader(headers, "oai-client-build-number"),
+  );
+}
+
+function getHeader(headers: Record<string, string>, name: string) {
+  const lowerName = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lowerName && value) {
+      return value;
+    }
+  }
+  return "";
 }
 
 async function prepareChatgptBackendHeaders(params: {
@@ -246,6 +313,8 @@ async function prepareChatgptBackendHeaders(params: {
   if (!params.initialUrl.includes("chatgpt.com")) {
     console.log("[browser] opening https://chatgpt.com/");
     await params.page.send("Page.navigate", { url: "https://chatgpt.com/" });
+  } else {
+    await params.page.send("Page.reload", { ignoreCache: true });
   }
 
   console.log(
