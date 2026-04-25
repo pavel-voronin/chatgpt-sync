@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.0
+
+- fix(chatgpt): skip unavailable exported assets without locking the backend
+- chore(release): bump package version to 0.12.0
+
 ## 0.11.3
 
 - fix(chatgpt): omit scan progress bar when target count is unknown

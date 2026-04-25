@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { BackendRequestError, isBackendRequestError } from "./errors";
 import type { ApiConversation, AssetStrategy, CapturedResponse } from "./types";
 
 export function toIsoNow(): string {
@@ -825,8 +826,12 @@ export async function saveCapturedAssets(
   assetResponses: Map<string, CapturedResponse>,
   target: AssetWriteTarget,
   downloader?: (fileId: string) => Promise<CapturedResponse | undefined>,
-): Promise<Map<string, string>> {
+): Promise<{
+  tokenToPath: Map<string, string>;
+  tokenToFailure: Map<string, string>;
+}> {
   const tokenToPath = new Map<string, string>();
+  const tokenToFailure = new Map<string, string>();
   const usedNames = new Set<string>();
   const existingNames = new Set(
     (await readdir(target.directory, { withFileTypes: true }).catch(() => []))
@@ -835,11 +840,38 @@ export async function saveCapturedAssets(
   );
   let index = 1;
   for (const fileId of assetIds) {
+    const token = `__ASSET_${fileId}__`;
     let response = assetResponses.get(fileId);
     if (!response && downloader) {
-      response = await downloader(fileId);
+      try {
+        response = await downloader(fileId);
+      } catch (error) {
+        if (isFatalAssetDownloadError(error)) {
+          throw error;
+        }
+        const reason = formatAssetDownloadFailureReason(error);
+        console.warn(`[asset] skipped ${fileId}: ${reason}`);
+        tokenToFailure.set(token, `(выгрузить файл не удалось: ${reason})`);
+        continue;
+      }
     }
     if (!response) {
+      console.warn(
+        `[asset] skipped ${fileId}: no captured or downloadable response`,
+      );
+      tokenToFailure.set(token, "(выгрузить файл не удалось: no response)");
+      continue;
+    }
+    if (response.status && !isPositiveStatus(response.status)) {
+      if (isFatalAssetStatus(response.status)) {
+        throw new BackendRequestError(
+          `Could not save captured file ${fileId} status=${response.status}`,
+          response.status,
+        );
+      }
+      const reason = `status=${response.status}`;
+      console.warn(`[asset] skipped ${fileId}: ${reason}`);
+      tokenToFailure.set(token, `(выгрузить файл не удалось: ${reason})`);
       continue;
     }
 
@@ -861,7 +893,7 @@ export async function saveCapturedAssets(
     );
     await mkdir(target.directory, { recursive: true });
     tokenToPath.set(
-      `__ASSET_${fileId}__`,
+      token,
       buildRelativeAssetPath(target.relativeDir, filename),
     );
     usedNames.add(filename);
@@ -870,7 +902,32 @@ export async function saveCapturedAssets(
     await writeFile(filePath, bytes);
   }
 
-  return tokenToPath;
+  return { tokenToPath, tokenToFailure };
+}
+
+function isFatalAssetDownloadError(error: unknown) {
+  if (!isBackendRequestError(error)) {
+    return false;
+  }
+  return isFatalAssetStatus(error.status);
+}
+
+function isFatalAssetStatus(status: number | null) {
+  return status === 429 || (status !== null && status >= 500);
+}
+
+function isPositiveStatus(status: number) {
+  return status >= 200 && status < 400;
+}
+
+function formatAssetDownloadFailureReason(error: unknown) {
+  if (isBackendRequestError(error)) {
+    return `status=${error.status ?? "unknown"}`;
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return "unknown error";
 }
 
 export function buildConversationMarkdown(params: {

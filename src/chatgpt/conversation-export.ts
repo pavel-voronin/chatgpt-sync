@@ -166,7 +166,7 @@ export async function exportConversation(
   });
   await removeAssetArtifacts(assetTarget);
 
-  const tokenToPath = await saveCapturedAssets(
+  const { tokenToPath, tokenToFailure } = await saveCapturedAssets(
     rendered.assetIds,
     assetResponses,
     assetTarget,
@@ -178,10 +178,11 @@ export async function exportConversation(
 
   const messageBlocks = rendered.blocks
     .map((block) => {
-      let markdown = block.markdown;
-      for (const [token, relPath] of tokenToPath.entries()) {
-        markdown = markdown.replaceAll(token, relPath);
-      }
+      const markdown = applyAssetReplacements(
+        block.markdown,
+        tokenToPath,
+        tokenToFailure,
+      );
       return `## ${block.role}\n\n${markdown}`;
     })
     .join("\n\n");
@@ -262,6 +263,43 @@ function rawConversationJsonPath(markdownPath: string) {
 
 function ensureTrailingNewline(value: string) {
   return value.endsWith("\n") ? value : `${value}\n`;
+}
+
+function applyAssetReplacements(
+  markdown: string,
+  tokenToPath: Map<string, string>,
+  tokenToFailure: Map<string, string>,
+) {
+  let next = markdown;
+  for (const [token, relPath] of tokenToPath.entries()) {
+    next = next.replaceAll(token, relPath);
+  }
+  for (const [token, failureText] of tokenToFailure.entries()) {
+    next = replaceFailedAssetMarkdown(next, token, failureText);
+  }
+  return next;
+}
+
+function replaceFailedAssetMarkdown(
+  markdown: string,
+  token: string,
+  failureText: string,
+) {
+  const escapedToken = escapeRegExp(token);
+  return markdown
+    .replace(
+      new RegExp(`!\\[([^\\]\\n]*)\\]\\(${escapedToken}\\)`, "g"),
+      (_match, alt: string) => `${alt || "image"} ${failureText}`,
+    )
+    .replace(
+      new RegExp(`\\[([^\\]\\n]+)\\]\\(${escapedToken}\\)`, "g"),
+      (_match, label: string) => `${label} ${failureText}`,
+    )
+    .replaceAll(token, failureText);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function responseBodyToText(response: CapturedResponse): string {
