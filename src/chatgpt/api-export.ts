@@ -359,10 +359,14 @@ function applyConversationScan(
 
 function formatScanProgress(progress: ConversationScanProgress) {
   const total = progress.total === null ? "unknown" : String(progress.total);
+  const selected =
+    progress.targetCount === null
+      ? String(progress.selectedCount)
+      : formatProgress(progress.selectedCount, progress.targetCount);
   const stop = progress.stopReason ? ` stop=${progress.stopReason}` : "";
   return (
     `[scan] page=${progress.scannedPages} offset=${progress.offset}` +
-    ` fetched=${progress.pageItems} selected=${progress.selectedCount}` +
+    ` fetched=${progress.pageItems} progress=${selected}` +
     ` total=${total}${stop}`
   );
 }
@@ -393,10 +397,10 @@ async function exportPendingConversations(params: {
         right.summary.update_time || null,
       ),
     );
-  const pending = allPending.slice(0, params.batchLimit);
+  const pending = selectExportBatch(allPending, params.batchLimit);
 
   console.log(
-    `[export] pending=${allPending.length} batch=${pending.length} limit=${params.batchLimit} startDelayMs=${params.startDelayMs}`,
+    `[export] pending=${allPending.length} batch=${pending.length}/${allPending.length} limit=${formatExportBatchLimit(params.batchLimit)} startDelayMs=${params.startDelayMs}`,
   );
 
   let previousExportStartedAt: number | null = null;
@@ -418,7 +422,9 @@ async function exportPendingConversations(params: {
         }),
       );
       await saveChatgptIndex(params.indexPath, params.index);
-      console.log(`[skip] ${record.summary.title} missing from workspace`);
+      console.log(
+        `[skip] progress=${formatProgress(index + 1, pending.length)} ${record.summary.title} missing from workspace`,
+      );
       continue;
     }
 
@@ -428,10 +434,13 @@ async function exportPendingConversations(params: {
       record.summary.title,
       index,
       previousExportStartedAt,
+      pending.length,
     );
     previousExportStartedAt = Date.now();
     const startedAt = toIsoNow();
-    console.log(`[export] ${record.summary.title}`);
+    console.log(
+      `[export] progress=${formatProgress(index + 1, pending.length)} ${record.summary.title}`,
+    );
 
     const exportResult = await exportConversation({
       page: params.page,
@@ -467,7 +476,7 @@ async function exportPendingConversations(params: {
     await saveChatgptIndex(params.indexPath, params.index);
 
     console.log(
-      `[done] ${exportResult.title} turns=${exportResult.turns} assets=${exportResult.assets}`,
+      `[done] progress=${formatProgress(index + 1, pending.length)} ${exportResult.title} turns=${exportResult.turns} assets=${exportResult.assets}`,
     );
     filesystem.records.set(chatId, {
       filePath: path.resolve(exportResult.filePath),
@@ -482,11 +491,32 @@ async function exportPendingConversations(params: {
   console.log("[export] complete");
 }
 
+function selectExportBatch<T>(items: T[], batchLimit: number) {
+  if (batchLimit < 0) {
+    return items;
+  }
+  return items.slice(0, batchLimit);
+}
+
+function formatExportBatchLimit(batchLimit: number) {
+  return batchLimit < 0 ? "unlimited" : String(batchLimit);
+}
+
+function formatProgress(current: number, total: number) {
+  if (total <= 0) {
+    return `${current}/${total} [----------]`;
+  }
+  const width = 10;
+  const filled = Math.min(width, Math.floor((current / total) * width));
+  return `${current}/${total} [${"#".repeat(filled)}${"-".repeat(width - filled)}]`;
+}
+
 async function waitBeforeExportStart(
   delayMs: number,
   title: string,
   exportIndex: number,
   previousExportStartedAt: number | null,
+  batchCount: number,
 ) {
   if (exportIndex === 0 || delayMs <= 0 || previousExportStartedAt === null) {
     return;
@@ -496,7 +526,9 @@ async function waitBeforeExportStart(
   if (remainingDelayMs <= 0) {
     return;
   }
-  console.log(`[wait] ${remainingDelayMs}ms before export ${title}`);
+  console.log(
+    `[wait] ${remainingDelayMs}ms before export progress=${formatProgress(exportIndex + 1, batchCount)} ${title}`,
+  );
   await new Promise((resolve) => setTimeout(resolve, remainingDelayMs));
 }
 

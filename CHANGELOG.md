@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.1
+
+- fix(chatgpt): support unlimited export batches and progress logs
+
 ## 0.11.0
 
 - fix(chatgpt): wait for backend headers during startup

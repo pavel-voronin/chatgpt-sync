@@ -38,6 +38,14 @@ function parseNonNegativeInt(input: string | undefined, fallback: number) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function parseBatchLimit(input: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(input ?? "", 10);
+  if (parsed === -1 || parsed >= 0) {
+    return parsed;
+  }
+  return fallback;
+}
+
 function parseBootstrapMode(
   input: string | undefined,
 ): SyncBootstrapMode | null {
@@ -155,7 +163,7 @@ export function resolveConfig() {
   const dumpRawConversationJson = parseBoolean(
     process.env.CHATGPT_SYNC_DUMP_RAW_CONVERSATION_JSON,
   );
-  const exportBatchLimit = parsePositiveInt(
+  const exportBatchLimit = parseBatchLimit(
     process.env.CHATGPT_SYNC_EXPORT_BATCH_LIMIT,
     DEFAULT_EXPORT_BATCH_LIMIT,
   );

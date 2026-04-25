@@ -34,6 +34,7 @@ export type ConversationScanProgress = {
   scannedPages: number;
   pageItems: number;
   selectedCount: number;
+  targetCount: number | null;
   total: number | null;
   stopReason: "count" | "cutoff" | "empty-page" | "last-page" | null;
 };
@@ -86,6 +87,7 @@ export async function planConversationSummaries(
     watermark: params.watermark,
     bootstrapDays: params.bootstrapDays,
   });
+  const fallbackTargetCount = countLimit;
 
   let offset = 0;
   let selectedCount = 0;
@@ -104,6 +106,7 @@ export async function planConversationSummaries(
       params.requestHeaders,
     );
     scannedPages += 1;
+    const targetCount = fallbackTargetCount ?? response.total ?? null;
     const pageItems = response.items || [];
     if (pageItems.length === 0) {
       stopReason = "empty-page";
@@ -113,6 +116,7 @@ export async function planConversationSummaries(
         scannedPages,
         pageItems: 0,
         selectedCount,
+        targetCount,
         total: response.total ?? null,
         stopReason,
       });
@@ -156,6 +160,7 @@ export async function planConversationSummaries(
       scannedPages,
       pageItems: pageItems.length,
       selectedCount,
+      targetCount,
       total: response.total ?? null,
       stopReason,
     });
