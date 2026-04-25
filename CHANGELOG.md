@@ -3,6 +3,7 @@
 ## 0.10.0
 
 - feat(chatgpt): add guarded scan progress, throttling, checkpoints, and backend lock
+- chore(release): bump package version to 0.10.0
 
 ## 0.9.0
 
