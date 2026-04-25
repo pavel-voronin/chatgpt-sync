@@ -10,6 +10,11 @@ export const DEFAULT_SYNC_DAYS = 14;
 export const DEFAULT_SYNC_OVERLAP_MINUTES = 60;
 export const DEFAULT_SYNC_BOOTSTRAP_COUNT = 50;
 export const DEFAULT_SYNC_BOOTSTRAP_DAYS = 14;
+export const DEFAULT_LIST_PAGE_DELAY_MS = 1_000;
+export const DEFAULT_LIST_PAGE_JITTER_MS = 1_000;
+export const DEFAULT_EXPORT_BATCH_LIMIT = 10;
+export const DEFAULT_EXPORT_START_DELAY_MS = 2_000;
+export const DEFAULT_BACKEND_LOCK_MINUTES = 10;
 export const DEFAULT_ASSET_STRATEGY: AssetStrategy = "fixed-folder";
 export const DEFAULT_ASSET_SUBDIR = "assets";
 export const DEFAULT_FIXED_ASSET_DIR = "assets";
@@ -25,6 +30,11 @@ function parseBoolean(input: string | undefined): boolean {
 function parsePositiveInt(input: string | undefined, fallback: number) {
   const parsed = Number.parseInt(input ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInt(input: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(input ?? "", 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function parseBootstrapMode(
@@ -105,6 +115,14 @@ export function resolveConfig() {
     process.env.CHATGPT_SYNC_LIST_LIMIT,
     DEFAULT_LIST_LIMIT,
   );
+  const listPageDelayMs = parseNonNegativeInt(
+    process.env.CHATGPT_SYNC_LIST_PAGE_DELAY_MS,
+    DEFAULT_LIST_PAGE_DELAY_MS,
+  );
+  const listPageJitterMs = parseNonNegativeInt(
+    process.env.CHATGPT_SYNC_LIST_PAGE_JITTER_MS,
+    DEFAULT_LIST_PAGE_JITTER_MS,
+  );
   const syncCount = parsePositiveInt(
     process.env.CHATGPT_SYNC_COUNT,
     DEFAULT_SYNC_COUNT,
@@ -136,6 +154,18 @@ export function resolveConfig() {
   const dumpRawConversationJson = parseBoolean(
     process.env.CHATGPT_SYNC_DUMP_RAW_CONVERSATION_JSON,
   );
+  const exportBatchLimit = parsePositiveInt(
+    process.env.CHATGPT_SYNC_EXPORT_BATCH_LIMIT,
+    DEFAULT_EXPORT_BATCH_LIMIT,
+  );
+  const exportStartDelayMs = parseNonNegativeInt(
+    process.env.CHATGPT_SYNC_EXPORT_START_DELAY_MS,
+    DEFAULT_EXPORT_START_DELAY_MS,
+  );
+  const backendLockMinutes = parseNonNegativeInt(
+    process.env.CHATGPT_SYNC_BACKEND_LOCK_MINUTES,
+    DEFAULT_BACKEND_LOCK_MINUTES,
+  );
 
   return {
     cdpHttp,
@@ -146,6 +176,8 @@ export function resolveConfig() {
     fixedAssetDir,
     syncMode,
     listLimit,
+    listPageDelayMs,
+    listPageJitterMs,
     syncCount,
     syncDays,
     syncOverlapMinutes,
@@ -155,5 +187,8 @@ export function resolveConfig() {
     conversationId,
     renderUnknownPartsAsJson,
     dumpRawConversationJson,
+    exportBatchLimit,
+    exportStartDelayMs,
+    backendLockMinutes,
   };
 }

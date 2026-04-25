@@ -13,6 +13,8 @@ export function indexFilePath(workspaceDir: string) {
 export function createEmptyIndex(): ChatgptIndex {
   return {
     watermark: null,
+    backend_lock_until: null,
+    backend_lock_reason: null,
     conversations: {},
   };
 }

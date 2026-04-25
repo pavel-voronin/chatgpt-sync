@@ -84,9 +84,14 @@ See `.env.example` for all supported keys.
 - `CHATGPT_SYNC_MODE` selects the normal sync mode. Default: `incremental`
   Valid values: `incremental`, `full`, `days`, `count`
 - `CHATGPT_SYNC_LIST_LIMIT` sets the page size for conversation list fetches. Default: `28`
+- `CHATGPT_SYNC_LIST_PAGE_DELAY_MS` sets the delay between conversation list page requests. Default: `1000`
+- `CHATGPT_SYNC_LIST_PAGE_JITTER_MS` adds random jitter to each conversation list page delay. Default: `1000`
 - `CHATGPT_SYNC_COUNT` sets the conversation limit for `count` mode. Default: `50`
 - `CHATGPT_SYNC_DAYS` sets the age window in days for `days` mode. Default: `14`
 - `CHATGPT_SYNC_OVERLAP_MINUTES` sets the overlap window for `incremental` mode. Default: `60`
+- `CHATGPT_SYNC_EXPORT_BATCH_LIMIT` sets the maximum number of pending conversations exported per run. Default: `10`
+- `CHATGPT_SYNC_EXPORT_START_DELAY_MS` sets the minimum delay between conversation export starts after the first export in a batch. Default: `2000`
+- `CHATGPT_SYNC_BACKEND_LOCK_MINUTES` sets how long the index is locked after a backend refusal or missing conversation payload. Default: `10`
 
 ### First-run bootstrap
 

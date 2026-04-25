@@ -1,7 +1,7 @@
 import { DEFAULT_TIMEOUT_MS } from "./config";
 import type { BrowserClient, CapturedResponse } from "./types";
 
-type CdpResponseMeta = { url: string; mimeType: string };
+type CdpResponseMeta = { url: string; mimeType: string; status?: number };
 
 const CHATGPT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
@@ -163,13 +163,28 @@ export async function captureNavigationResponses(
   const offResponse = cdp.on("Network.responseReceived", (params) => {
     const requestId = String(params.requestId ?? "");
     const response = params.response as
-      | { url?: string; mimeType?: string }
+      | { url?: string; mimeType?: string; status?: number }
       | undefined;
     if (!requestId || !response?.url) return;
     responseMeta.set(requestId, {
       url: response.url,
       mimeType: response.mimeType || "",
+      status: response.status,
     });
+    if (
+      matcher(response.url) &&
+      typeof response.status === "number" &&
+      (response.status < 200 || response.status >= 300) &&
+      !responses.has(response.url)
+    ) {
+      responses.set(response.url, {
+        url: response.url,
+        mimeType: response.mimeType || "",
+        status: response.status,
+        body: "",
+        base64Encoded: false,
+      });
+    }
   });
   const offFinish = cdp.on("Network.loadingFinished", async (params) => {
     const requestId = String(params.requestId ?? "");
@@ -193,6 +208,7 @@ export async function captureNavigationResponses(
         responses.set(responseUrl, {
           url: responseUrl,
           mimeType: response?.mimeType || "",
+          status: response?.status,
           body: bodyResult.body,
           base64Encoded: Boolean(bodyResult.base64Encoded),
         });

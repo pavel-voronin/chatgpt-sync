@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { captureNavigationResponses } from "./cdp";
+import { BackendRequestError } from "./errors";
 import {
   buildConversationMarkdown,
   normalizeText,
@@ -70,6 +71,9 @@ export async function exportConversation(
       if (!convoEntry) {
         return false;
       }
+      if (!isPositiveStatus(convoEntry[1].status)) {
+        return true;
+      }
       try {
         const parsed = JSON.parse(
           responseBodyToText(convoEntry[1]),
@@ -94,8 +98,16 @@ export async function exportConversation(
     }
   });
   if (!convoEntry) {
-    throw new Error(
+    throw new BackendRequestError(
       `Could not capture conversation payload for ${input.chatId}`,
+      null,
+    );
+  }
+
+  if (!isPositiveStatus(convoEntry[1].status)) {
+    throw new BackendRequestError(
+      `Could not fetch conversation payload for ${input.chatId} status=${convoEntry[1].status ?? "unknown"}`,
+      convoEntry[1].status ?? null,
     );
   }
 
@@ -270,7 +282,10 @@ async function downloadFileById(
     },
   );
   if (!downloadResponse.ok) {
-    return undefined;
+    throw new BackendRequestError(
+      `Could not fetch file download info for ${fileId} status=${downloadResponse.status}`,
+      downloadResponse.status,
+    );
   }
   const downloadInfo = (await downloadResponse.json()) as {
     download_url?: string;
@@ -283,7 +298,10 @@ async function downloadFileById(
     headers: requestHeaders,
   });
   if (!response.ok) {
-    return undefined;
+    throw new BackendRequestError(
+      `Could not download file ${fileId} status=${response.status}`,
+      response.status,
+    );
   }
   const contentType = response.headers.get("content-type") || "";
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -298,6 +316,10 @@ async function downloadFileById(
     body: Buffer.from(binary, "binary").toString("base64"),
     base64Encoded: true,
   };
+}
+
+function isPositiveStatus(status: number | undefined) {
+  return typeof status !== "number" || (status >= 200 && status < 300);
 }
 
 function normalizeDownloadHeaders(

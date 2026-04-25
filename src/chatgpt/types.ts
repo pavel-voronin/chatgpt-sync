@@ -10,6 +10,7 @@ export type BrowserClient = {
 export type CapturedResponse = {
   url: string;
   mimeType: string;
+  status?: number;
   body: string;
   base64Encoded: boolean;
 };
@@ -48,6 +49,8 @@ export type ApiConversation = {
 
 export type ChatgptIndex = {
   watermark: string | null;
+  backend_lock_until?: string | null;
+  backend_lock_reason?: string | null;
   conversations: Record<string, ChatgptIndexRecord>;
 };
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.0
+
+- feat(chatgpt): add guarded scan progress, throttling, checkpoints, and backend lock
+
 ## 0.9.0
 
 - feat(config): load settings from `.env` files

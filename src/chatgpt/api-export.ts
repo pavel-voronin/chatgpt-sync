@@ -14,7 +14,11 @@ import {
   upsertConversationIndex,
 } from "./index-store";
 import { exportConversation } from "./conversation-export";
-import { planConversationSummaries } from "./list-scan";
+import { isBackendRequestError } from "./errors";
+import {
+  planConversationSummaries,
+  type ConversationScanProgress,
+} from "./list-scan";
 import type {
   ChatgptIndex,
   ChatgptIndexRecord,
@@ -33,6 +37,8 @@ export async function apiMain() {
     fixedAssetDir,
     syncMode,
     listLimit,
+    listPageDelayMs,
+    listPageJitterMs,
     syncCount,
     syncDays,
     syncOverlapMinutes,
@@ -42,12 +48,22 @@ export async function apiMain() {
     conversationId,
     renderUnknownPartsAsJson,
     dumpRawConversationJson,
+    exportBatchLimit,
+    exportStartDelayMs,
+    backendLockMinutes,
   } = resolveConfig();
 
   await mkdir(workspaceDir, { recursive: true });
   await mkdir(inboxDir, { recursive: true });
   const indexPath = indexFilePath(workspaceDir);
   const initialIndex = await loadChatgptIndex(indexPath);
+  console.log(
+    `[init] workspace=${workspaceDir} mode=${conversationId ? "single" : syncMode}`,
+  );
+
+  if (await exitIfBackendLocked(indexPath, initialIndex)) {
+    return;
+  }
 
   if (!initialIndex.watermark && !bootstrapMode) {
     throw new Error(
@@ -55,6 +71,7 @@ export async function apiMain() {
     );
   }
 
+  console.log(`[cdp] connecting to ${cdpHttp}`);
   const version = (await fetch(`${cdpHttp}/json/version`).then((res) =>
     res.json(),
   )) as {
@@ -65,6 +82,7 @@ export async function apiMain() {
   }
 
   const tab = await ensureSingleChatgptTab(cdpHttp);
+  console.log(`[cdp] using tab ${tab.url}`);
   const page = await connect(tab.webSocketDebuggerUrl);
   await initializeChatgptSession(page);
 
@@ -86,9 +104,11 @@ export async function apiMain() {
 
   try {
     if (!tab.url.includes("chatgpt.com")) {
+      console.log("[browser] opening https://chatgpt.com/");
       await page.send("Page.navigate", { url: "https://chatgpt.com/" });
     }
     if (!backendHeaders) {
+      console.log("[browser] waiting for backend API headers");
       await page.send("Page.reload", { ignoreCache: true });
       const startedAt = Date.now();
       while (!backendHeaders && Date.now() - startedAt < 10_000) {
@@ -102,6 +122,7 @@ export async function apiMain() {
     }
 
     if (conversationId) {
+      console.log(`[single] exporting conversation ${conversationId}`);
       const existing = initialIndex.conversations[conversationId];
       const filesystem = await readExistingRecords(workspaceDir);
       const exportResult = await exportConversation({
@@ -139,23 +160,15 @@ export async function apiMain() {
       await saveChatgptIndex(indexPath, initialIndex);
 
       console.log(
-        JSON.stringify(
-          [
-            {
-              title: exportResult.title,
-              filePath: exportResult.filePath,
-              href: exportResult.href,
-              turns: exportResult.turns,
-              assets: exportResult.assets,
-            },
-          ],
-          null,
-          2,
-        ),
+        `[done] ${exportResult.title} turns=${exportResult.turns} assets=${exportResult.assets}`,
       );
       return;
     }
 
+    console.log(
+      `[scan] reading conversation list effectiveMode=${initialIndex.watermark ? syncMode : bootstrapMode} pageLimit=${listLimit} pageDelayMs=${listPageDelayMs} pageJitterMs=${listPageJitterMs}`,
+    );
+    let savedScanSummaries = 0;
     const scanPlan = await planConversationSummaries(page, {
       mode: syncMode,
       pageLimit: listLimit,
@@ -166,33 +179,42 @@ export async function apiMain() {
       bootstrapMode,
       bootstrapCount,
       bootstrapDays,
+      pageDelayMs: listPageDelayMs,
+      pageJitterMs: listPageJitterMs,
       requestHeaders: backendHeaders,
+      onPageItems: async (items) => {
+        applyConversationScan(initialIndex, items);
+        await saveChatgptIndex(indexPath, initialIndex);
+        savedScanSummaries += items.length;
+        console.log(
+          `[scan] saved ${items.length} conversation summaries totalSaved=${savedScanSummaries}`,
+        );
+      },
+      onProgress: (progress) => {
+        console.log(formatScanProgress(progress));
+      },
+      onPageDelay: (delayMs, nextOffset) => {
+        console.log(
+          `[wait] ${delayMs}ms before list page offset=${nextOffset}`,
+        );
+      },
+    }).catch((error) => {
+      console.error(
+        `[scan] failed after saving ${savedScanSummaries} conversation summaries; watermark was not advanced`,
+      );
+      throw error;
     });
 
     const scanCompletedAt = toIsoNow();
-    applyConversationScan(initialIndex, scanPlan.items);
+    console.log(
+      `[scan] completed selected=${scanPlan.selectedCount} pages=${scanPlan.scannedPages}`,
+    );
     initialIndex.watermark = scanCompletedAt;
     await saveChatgptIndex(indexPath, initialIndex);
 
-    console.log(
-      JSON.stringify(
-        {
-          scan: {
-            mode: scanPlan.mode,
-            effectiveMode: scanPlan.effectiveMode,
-            selectedCount: scanPlan.selectedCount,
-            scannedPages: scanPlan.scannedPages,
-            cutoffAt: scanPlan.cutoffAt,
-            watermark: initialIndex.watermark,
-          },
-        },
-        null,
-        2,
-      ),
-    );
-
     const index = await loadChatgptIndex(indexPath);
-    const exported = await exportPendingConversations({
+    console.log("[export] checking pending conversations");
+    await exportPendingConversations({
       page,
       index,
       indexPath,
@@ -204,14 +226,65 @@ export async function apiMain() {
       backendHeaders,
       renderUnknownPartsAsJson,
       dumpRawConversationJson,
+      batchLimit: exportBatchLimit,
+      startDelayMs: exportStartDelayMs,
     });
 
     await saveChatgptIndex(indexPath, index);
-    console.log(JSON.stringify(exported, null, 2));
+  } catch (error) {
+    if (isBackendRequestError(error)) {
+      await lockBackend(indexPath, initialIndex, backendLockMinutes, error);
+    }
+    throw error;
   } finally {
     offHeaders();
     page.close();
   }
+}
+
+async function exitIfBackendLocked(indexPath: string, index: ChatgptIndex) {
+  const lockedUntil = parseIsoTime(index.backend_lock_until || null);
+  if (!lockedUntil) {
+    return false;
+  }
+
+  const now = Date.now();
+  if (lockedUntil > now) {
+    console.log(
+      `[lock] backend locked until ${index.backend_lock_until}; reason=${index.backend_lock_reason || "unknown"}`,
+    );
+    return true;
+  }
+
+  index.backend_lock_until = null;
+  index.backend_lock_reason = null;
+  await saveChatgptIndex(indexPath, index);
+  console.log("[lock] expired backend lock cleared");
+  return false;
+}
+
+async function lockBackend(
+  indexPath: string,
+  index: ChatgptIndex,
+  lockMinutes: number,
+  error: Error & { status?: number | null },
+) {
+  const lockUntil = new Date(Date.now() + lockMinutes * 60_000).toISOString();
+  const latestIndex = await loadChatgptIndex(indexPath).catch(() => index);
+  latestIndex.backend_lock_until = lockUntil;
+  latestIndex.backend_lock_reason = error.message;
+  await saveChatgptIndex(indexPath, latestIndex);
+  console.error(
+    `[lock] backend locked until ${lockUntil} for ${lockMinutes} minutes; reason=${error.message}`,
+  );
+}
+
+function parseIsoTime(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
 }
 
 function applyConversationScan(
@@ -241,6 +314,16 @@ function applyConversationScan(
   }
 }
 
+function formatScanProgress(progress: ConversationScanProgress) {
+  const total = progress.total === null ? "unknown" : String(progress.total);
+  const stop = progress.stopReason ? ` stop=${progress.stopReason}` : "";
+  return (
+    `[scan] page=${progress.scannedPages} offset=${progress.offset}` +
+    ` fetched=${progress.pageItems} selected=${progress.selectedCount}` +
+    ` total=${total}${stop}`
+  );
+}
+
 async function exportPendingConversations(params: {
   page: Awaited<ReturnType<typeof connect>>;
   index: ChatgptIndex;
@@ -253,18 +336,13 @@ async function exportPendingConversations(params: {
   backendHeaders: Record<string, string>;
   renderUnknownPartsAsJson?: boolean;
   dumpRawConversationJson?: boolean;
+  batchLimit: number;
+  startDelayMs: number;
 }) {
   const filesystem = await readExistingRecords(params.workspaceDir);
   const usedMarkdownPaths = new Set<string>();
-  const exported: Array<{
-    title: string;
-    filePath: string;
-    href: string;
-    turns: number;
-    assets: number;
-  }> = [];
 
-  const pending = Object.entries(params.index.conversations)
+  const allPending = Object.entries(params.index.conversations)
     .filter(([, record]) => record.status === "pending")
     .sort(([, left], [, right]) =>
       compareTimestampDesc(
@@ -272,8 +350,15 @@ async function exportPendingConversations(params: {
         right.summary.update_time || null,
       ),
     );
+  const pending = allPending.slice(0, params.batchLimit);
 
-  for (const [chatId, record] of pending) {
+  console.log(
+    `[export] pending=${allPending.length} batch=${pending.length} limit=${params.batchLimit} startDelayMs=${params.startDelayMs}`,
+  );
+
+  let previousExportStartedAt: number | null = null;
+
+  for (const [index, [chatId, record]] of pending.entries()) {
     const existingRecord = filesystem.records.get(chatId);
     if (
       !existingRecord &&
@@ -290,10 +375,18 @@ async function exportPendingConversations(params: {
         }),
       );
       await saveChatgptIndex(params.indexPath, params.index);
+      console.log(`[skip] ${record.summary.title} missing from workspace`);
       continue;
     }
 
     const chatHref = `https://chatgpt.com/c/${chatId}`;
+    await waitBeforeExportStart(
+      params.startDelayMs,
+      record.summary.title,
+      index,
+      previousExportStartedAt,
+    );
+    previousExportStartedAt = Date.now();
     const startedAt = toIsoNow();
     console.log(`[export] ${record.summary.title}`);
 
@@ -330,13 +423,6 @@ async function exportPendingConversations(params: {
     );
     await saveChatgptIndex(params.indexPath, params.index);
 
-    exported.push({
-      title: exportResult.title,
-      filePath: exportResult.filePath,
-      href: exportResult.href,
-      turns: exportResult.turns,
-      assets: exportResult.assets,
-    });
     console.log(
       `[done] ${exportResult.title} turns=${exportResult.turns} assets=${exportResult.assets}`,
     );
@@ -350,7 +436,25 @@ async function exportPendingConversations(params: {
     filesystem.markdownPaths.add(path.resolve(exportResult.filePath));
   }
 
-  return exported;
+  console.log("[export] complete");
+}
+
+async function waitBeforeExportStart(
+  delayMs: number,
+  title: string,
+  exportIndex: number,
+  previousExportStartedAt: number | null,
+) {
+  if (exportIndex === 0 || delayMs <= 0 || previousExportStartedAt === null) {
+    return;
+  }
+  const elapsedMs = Date.now() - previousExportStartedAt;
+  const remainingDelayMs = delayMs - elapsedMs;
+  if (remainingDelayMs <= 0) {
+    return;
+  }
+  console.log(`[wait] ${remainingDelayMs}ms before export ${title}`);
+  await new Promise((resolve) => setTimeout(resolve, remainingDelayMs));
 }
 
 function isNewerTimestamp(current: string | null, previous: string | null) {
