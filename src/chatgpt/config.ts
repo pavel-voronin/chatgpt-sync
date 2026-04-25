@@ -15,6 +15,7 @@ export const DEFAULT_LIST_PAGE_JITTER_MS = 1_000;
 export const DEFAULT_EXPORT_BATCH_LIMIT = 10;
 export const DEFAULT_EXPORT_START_DELAY_MS = 2_000;
 export const DEFAULT_BACKEND_LOCK_MINUTES = 10;
+export const DEFAULT_BACKEND_HEADERS_TIMEOUT_MS = 30_000;
 export const DEFAULT_ASSET_STRATEGY: AssetStrategy = "fixed-folder";
 export const DEFAULT_ASSET_SUBDIR = "assets";
 export const DEFAULT_FIXED_ASSET_DIR = "assets";
@@ -166,6 +167,10 @@ export function resolveConfig() {
     process.env.CHATGPT_SYNC_BACKEND_LOCK_MINUTES,
     DEFAULT_BACKEND_LOCK_MINUTES,
   );
+  const backendHeadersTimeoutMs = parsePositiveInt(
+    process.env.CHATGPT_SYNC_BACKEND_HEADERS_TIMEOUT_MS,
+    DEFAULT_BACKEND_HEADERS_TIMEOUT_MS,
+  );
 
   return {
     cdpHttp,
@@ -190,5 +195,6 @@ export function resolveConfig() {
     exportBatchLimit,
     exportStartDelayMs,
     backendLockMinutes,
+    backendHeadersTimeoutMs,
   };
 }

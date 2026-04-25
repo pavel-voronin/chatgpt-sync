@@ -51,6 +51,7 @@ export async function apiMain() {
     exportBatchLimit,
     exportStartDelayMs,
     backendLockMinutes,
+    backendHeadersTimeoutMs,
   } = resolveConfig();
 
   await mkdir(workspaceDir, { recursive: true });
@@ -103,18 +104,12 @@ export async function apiMain() {
   });
 
   try {
-    if (!tab.url.includes("chatgpt.com")) {
-      console.log("[browser] opening https://chatgpt.com/");
-      await page.send("Page.navigate", { url: "https://chatgpt.com/" });
-    }
-    if (!backendHeaders) {
-      console.log("[browser] waiting for backend API headers");
-      await page.send("Page.reload", { ignoreCache: true });
-      const startedAt = Date.now();
-      while (!backendHeaders && Date.now() - startedAt < 10_000) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    }
+    await prepareChatgptBackendHeaders({
+      page,
+      initialUrl: tab.url,
+      timeoutMs: backendHeadersTimeoutMs,
+      getBackendHeaders: () => backendHeaders,
+    });
     if (!backendHeaders) {
       throw new Error(
         "Could not capture backend API headers from the active browser tab",
@@ -240,6 +235,54 @@ export async function apiMain() {
     offHeaders();
     page.close();
   }
+}
+
+async function prepareChatgptBackendHeaders(params: {
+  page: Awaited<ReturnType<typeof connect>>;
+  initialUrl: string;
+  timeoutMs: number;
+  getBackendHeaders: () => Record<string, string> | null;
+}) {
+  if (!params.initialUrl.includes("chatgpt.com")) {
+    console.log("[browser] opening https://chatgpt.com/");
+    await params.page.send("Page.navigate", { url: "https://chatgpt.com/" });
+  }
+
+  console.log(
+    `[browser] waiting for backend API headers timeoutMs=${params.timeoutMs}`,
+  );
+  const startedAt = Date.now();
+  let lastProbeAt = 0;
+  while (
+    !params.getBackendHeaders() &&
+    Date.now() - startedAt < params.timeoutMs
+  ) {
+    const currentUrl = await currentPageUrl(params.page);
+    const now = Date.now();
+    if (currentUrl.includes("chatgpt.com") && now - lastProbeAt >= 1_000) {
+      lastProbeAt = now;
+      await probeBackendHeaders(params.page);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+async function currentPageUrl(page: Awaited<ReturnType<typeof connect>>) {
+  const result = (await page.send("Runtime.evaluate", {
+    returnByValue: true,
+    expression: "window.location.href",
+  })) as { result?: { value?: string } };
+  return result.result?.value || "";
+}
+
+async function probeBackendHeaders(page: Awaited<ReturnType<typeof connect>>) {
+  await page
+    .send("Runtime.evaluate", {
+      returnByValue: true,
+      awaitPromise: true,
+      expression: `fetch("/backend-api/conversations?offset=0&limit=1&order=updated&is_archived=false&is_starred=false", { credentials: "include" }).then(() => true).catch(() => false)`,
+    })
+    .catch(() => undefined);
 }
 
 async function exitIfBackendLocked(indexPath: string, index: ChatgptIndex) {

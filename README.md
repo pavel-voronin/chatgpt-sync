@@ -92,6 +92,7 @@ See `.env.example` for all supported keys.
 - `CHATGPT_SYNC_EXPORT_BATCH_LIMIT` sets the maximum number of pending conversations exported per run. Default: `10`
 - `CHATGPT_SYNC_EXPORT_START_DELAY_MS` sets the minimum delay between conversation export starts after the first export in a batch. Default: `2000`
 - `CHATGPT_SYNC_BACKEND_LOCK_MINUTES` sets how long the index is locked after a backend refusal or missing conversation payload. Default: `10`
+- `CHATGPT_SYNC_BACKEND_HEADERS_TIMEOUT_MS` sets how long startup waits for ChatGPT backend headers. Default: `30000`
 
 ### First-run bootstrap
 

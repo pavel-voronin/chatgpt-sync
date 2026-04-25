@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.0
+
+- fix(chatgpt): wait for backend headers during startup
+
 ## 0.10.0
 
 - feat(chatgpt): add guarded scan progress, throttling, checkpoints, and backend lock
