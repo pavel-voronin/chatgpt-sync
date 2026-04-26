@@ -156,6 +156,7 @@ export async function apiMain() {
         renderUnknownPartsAsJson,
         dumpRawConversationJson,
       });
+      const syncedAt = toIsoNow();
 
       upsertConversationIndex(
         initialIndex,
@@ -166,7 +167,7 @@ export async function apiMain() {
             title: exportResult.title,
             update_time: existing?.summary.update_time,
           },
-          updatedAt: exportResult.updatedAt,
+          updatedAt: syncedAt,
           status: "exported",
         }),
       );
@@ -408,10 +409,7 @@ function applyConversationScan(
     const shouldMarkPending =
       !existing ||
       existing.status === "pending" ||
-      isNewerTimestamp(
-        summary.update_time || null,
-        existing.summary.update_time || null,
-      );
+      isNewerThanLastSync(summary.update_time || null, existing);
 
     const nextStatus = resolveConversationStatus(
       existing?.status,
@@ -529,6 +527,7 @@ async function exportPendingConversations(params: {
       renderUnknownPartsAsJson: params.renderUnknownPartsAsJson,
       dumpRawConversationJson: params.dumpRawConversationJson,
     });
+    const syncedAt = toIsoNow();
 
     upsertConversationIndex(
       params.index,
@@ -538,7 +537,7 @@ async function exportPendingConversations(params: {
           ...record.summary,
           title: exportResult.title,
         },
-        updatedAt: exportResult.updatedAt,
+        updatedAt: syncedAt,
         status: "exported",
       }),
     );
@@ -602,22 +601,34 @@ async function waitBeforeExportStart(
 }
 
 function isNewerTimestamp(current: string | null, previous: string | null) {
-  if (!current) {
+  const currentTime = parseTimestamp(current);
+  if (currentTime === null) {
     return false;
   }
-  if (!previous) {
-    return true;
-  }
-
-  const currentTime = new Date(current).getTime();
-  const previousTime = new Date(previous).getTime();
-  if (!Number.isFinite(currentTime)) {
-    return false;
-  }
-  if (!Number.isFinite(previousTime)) {
+  const previousTime = parseTimestamp(previous);
+  if (previousTime === null) {
     return true;
   }
   return currentTime > previousTime;
+}
+
+function parseTimestamp(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const time =
+    typeof value === "number" ? value * 1000 : new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function isNewerThanLastSync(
+  summaryUpdatedAt: string | null,
+  record: ChatgptIndexRecord,
+) {
+  return isNewerTimestamp(
+    summaryUpdatedAt,
+    record.updated_at || record.summary.update_time || null,
+  );
 }
 
 function compareTimestampDesc(left: string | null, right: string | null) {

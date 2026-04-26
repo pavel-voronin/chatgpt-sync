@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.1
+
+- fix(chatgpt): avoid re-exporting conversations after successful sync
+- chore(release): bump package version to 0.12.1
+
 ## 0.12.0
 
 - fix(chatgpt): skip unavailable exported assets without locking the backend
