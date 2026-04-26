@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.2
+
+- fix(chatgpt): clamp sync markers to ChatGPT update timestamps
+- chore(release): bump package version to 0.12.2
+
 ## 0.12.1
 
 - fix(chatgpt): avoid re-exporting conversations after successful sync

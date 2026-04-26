@@ -156,7 +156,10 @@ export async function apiMain() {
         renderUnknownPartsAsJson,
         dumpRawConversationJson,
       });
-      const syncedAt = toIsoNow();
+      const syncedAt = maxTimestampIso(
+        toIsoNow(),
+        existing?.summary.update_time || null,
+      );
 
       upsertConversationIndex(
         initialIndex,
@@ -527,7 +530,7 @@ async function exportPendingConversations(params: {
       renderUnknownPartsAsJson: params.renderUnknownPartsAsJson,
       dumpRawConversationJson: params.dumpRawConversationJson,
     });
-    const syncedAt = toIsoNow();
+    const syncedAt = maxTimestampIso(toIsoNow(), record.summary.update_time);
 
     upsertConversationIndex(
       params.index,
@@ -619,6 +622,18 @@ function parseTimestamp(value: string | number | null | undefined) {
   const time =
     typeof value === "number" ? value * 1000 : new Date(value).getTime();
   return Number.isFinite(time) ? time : null;
+}
+
+function maxTimestampIso(
+  left: string | null | undefined,
+  right: string | null | undefined,
+) {
+  const leftTime = parseTimestamp(left);
+  const rightTime = parseTimestamp(right);
+  if (leftTime === null && rightTime === null) {
+    return toIsoNow();
+  }
+  return new Date(Math.max(leftTime ?? 0, rightTime ?? 0)).toISOString();
 }
 
 function isNewerThanLastSync(
