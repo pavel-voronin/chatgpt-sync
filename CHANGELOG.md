@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.3
+
+- fix(chatgpt): clean removed pending exports before selecting batches
+- chore(release): bump package version to 0.12.3
+
 ## 0.12.2
 
 - fix(chatgpt): clamp sync markers to ChatGPT update timestamps

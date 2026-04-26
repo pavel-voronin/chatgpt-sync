@@ -458,6 +458,11 @@ async function exportPendingConversations(params: {
 }) {
   const filesystem = await readExistingRecords(params.workspaceDir);
   const usedMarkdownPaths = new Set<string>();
+  const removedMissingCount = await removeMissingPreviouslyExportedPending({
+    index: params.index,
+    indexPath: params.indexPath,
+    filesystemRecords: filesystem.records,
+  });
 
   const allPending = Object.entries(params.index.conversations)
     .filter(([, record]) => record.status === "pending")
@@ -468,9 +473,13 @@ async function exportPendingConversations(params: {
       ),
     );
   const pending = selectExportBatch(allPending, params.batchLimit);
+  const missingNeverExportedCount = allPending.filter(
+    ([chatId, record]) =>
+      !filesystem.records.has(chatId) && !wasPreviouslyExported(record),
+  ).length;
 
   console.log(
-    `[export] pending=${allPending.length} batch=${pending.length}/${allPending.length} limit=${formatExportBatchLimit(params.batchLimit)} startDelayMs=${params.startDelayMs}`,
+    `[export] pending=${allPending.length} batch=${pending.length}/${allPending.length} limit=${formatExportBatchLimit(params.batchLimit)} startDelayMs=${params.startDelayMs} removedMissing=${removedMissingCount} missingNeverExported=${missingNeverExportedCount}`,
   );
 
   let previousExportStartedAt: number | null = null;
@@ -560,6 +569,46 @@ async function exportPendingConversations(params: {
   }
 
   console.log("[export] complete");
+}
+
+async function removeMissingPreviouslyExportedPending(params: {
+  index: ChatgptIndex;
+  indexPath: string;
+  filesystemRecords: Map<
+    string,
+    { filePath: string; frontmatter: Record<string, string> }
+  >;
+}) {
+  let removed = 0;
+  for (const [chatId, record] of Object.entries(params.index.conversations)) {
+    if (
+      record.status !== "pending" ||
+      params.filesystemRecords.has(chatId) ||
+      !wasPreviouslyExported(record)
+    ) {
+      continue;
+    }
+
+    upsertConversationIndex(
+      params.index,
+      chatId,
+      buildConversationIndexRecord({
+        summary: record.summary,
+        updatedAt: record.updated_at,
+        status: "removed",
+      }),
+    );
+    removed += 1;
+  }
+
+  if (removed > 0) {
+    await saveChatgptIndex(params.indexPath, params.index);
+    console.log(
+      `[cleanup] removed ${removed} pending conversations missing from workspace`,
+    );
+  }
+
+  return removed;
 }
 
 function selectExportBatch<T>(items: T[], batchLimit: number) {
