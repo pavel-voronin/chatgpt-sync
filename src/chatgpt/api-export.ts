@@ -14,7 +14,11 @@ import {
   upsertConversationIndex,
 } from "./index-store";
 import { exportConversationFromBackendApi } from "./conversation-export";
-import { isBackendRequestError } from "./errors";
+import {
+  isBackendRequestError,
+  isConversationUnavailableError,
+  shouldLockBackendForError,
+} from "./errors";
 import {
   planConversationSummaries,
   type ConversationScanProgress,
@@ -249,7 +253,7 @@ export async function apiMain() {
 
     await saveChatgptIndex(indexPath, index);
   } catch (error) {
-    if (isBackendRequestError(error)) {
+    if (isBackendRequestError(error) && shouldLockBackendForError(error)) {
       await lockBackend(indexPath, initialIndex, backendLockMinutes, error);
     }
     throw error;
@@ -535,24 +539,48 @@ async function exportPendingConversations(params: {
       `[export] progress=${formatProgress(index + 1, pending.length)} ${record.summary.title}`,
     );
 
-    const exportResult = await exportConversationFromBackendApi({
-      page: params.page,
-      chatId,
-      chatHref: `https://chatgpt.com/c/${chatId}`,
-      workspaceDir: params.workspaceDir,
-      inboxDir: params.inboxDir,
-      assetStrategy: params.assetStrategy,
-      assetSubdir: params.assetSubdir,
-      fixedAssetDir: params.fixedAssetDir,
-      backendHeaders: params.backendHeaders,
-      existingRecord,
-      usedMarkdownPaths,
-      existingMarkdownPaths: filesystem.markdownPaths,
-      titleHint: record.summary.title,
-      exportStartedAt: startedAt,
-      renderUnknownPartsAsJson: params.renderUnknownPartsAsJson,
-      dumpRawConversationJson: params.dumpRawConversationJson,
-    });
+    let exportResult: Awaited<
+      ReturnType<typeof exportConversationFromBackendApi>
+    >;
+    try {
+      exportResult = await exportConversationFromBackendApi({
+        page: params.page,
+        chatId,
+        chatHref: `https://chatgpt.com/c/${chatId}`,
+        workspaceDir: params.workspaceDir,
+        inboxDir: params.inboxDir,
+        assetStrategy: params.assetStrategy,
+        assetSubdir: params.assetSubdir,
+        fixedAssetDir: params.fixedAssetDir,
+        backendHeaders: params.backendHeaders,
+        existingRecord,
+        usedMarkdownPaths,
+        existingMarkdownPaths: filesystem.markdownPaths,
+        titleHint: record.summary.title,
+        exportStartedAt: startedAt,
+        renderUnknownPartsAsJson: params.renderUnknownPartsAsJson,
+        dumpRawConversationJson: params.dumpRawConversationJson,
+      });
+    } catch (error) {
+      if (!isConversationUnavailableError(error)) {
+        throw error;
+      }
+
+      upsertConversationIndex(
+        params.index,
+        chatId,
+        buildConversationIndexRecord({
+          summary: record.summary,
+          updatedAt: record.updated_at,
+          status: "unavailable",
+        }),
+      );
+      await saveChatgptIndex(params.indexPath, params.index);
+      console.warn(
+        `[skip] progress=${formatProgress(index + 1, pending.length)} ${record.summary.title} unavailable status=${error.status ?? "unknown"}`,
+      );
+      continue;
+    }
     const syncedAt = maxTimestampIso(toIsoNow(), record.summary.update_time);
 
     upsertConversationIndex(
@@ -723,6 +751,9 @@ function resolveConversationStatus(
 ): ConversationSyncStatus {
   if (currentStatus === "removed") {
     return "removed";
+  }
+  if (currentStatus === "unavailable" && !shouldMarkPending) {
+    return "unavailable";
   }
   return shouldMarkPending ? "pending" : "exported";
 }

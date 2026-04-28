@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.5
+
+- fix(chatgpt): avoid backend locks for unavailable conversation payloads
+- chore(release): bump package version to 0.12.5
+
 ## 0.12.4
 
 - fix(chatgpt): fetch conversation exports through the backend API

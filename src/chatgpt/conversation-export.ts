@@ -1,6 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { BackendRequestError } from "./errors";
+import { BackendRequestError, ConversationUnavailableError } from "./errors";
 import {
   buildConversationMarkdown,
   normalizeText,
@@ -221,9 +221,13 @@ async function fetchConversationJsonFromBrowser(
 
   const value = payload.result?.value;
   if (!value || !value.ok) {
+    const status = value?.status ?? null;
+    if (status === 404) {
+      throw new ConversationUnavailableError(chatId, status);
+    }
     throw new BackendRequestError(
       `Could not fetch conversation payload for ${chatId} status=${value?.status ?? "unknown"}`,
-      value?.status ?? null,
+      status,
     );
   }
   if (!value.text) {

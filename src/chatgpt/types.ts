@@ -33,7 +33,11 @@ export type SyncMode = "incremental" | "full" | "days" | "count";
 
 export type SyncBootstrapMode = "count" | "days" | "full";
 
-export type ConversationSyncStatus = "pending" | "exported" | "removed";
+export type ConversationSyncStatus =
+  | "pending"
+  | "exported"
+  | "removed"
+  | "unavailable";
 
 export type AssetStrategy =
   | "vault-root"
