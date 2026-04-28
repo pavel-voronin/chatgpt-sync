@@ -1,6 +1,5 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { captureNavigationResponses } from "./cdp";
 import { BackendRequestError } from "./errors";
 import {
   buildConversationMarkdown,
@@ -49,69 +48,32 @@ export type ConversationExportOutput = {
   updatedAt: string;
 };
 
-export async function exportConversation(
+export async function exportConversationFromBackendApi(
   input: ConversationExportInput,
 ): Promise<ConversationExportOutput> {
   const exportStartedAt = input.exportStartedAt || toIsoNow();
-  const convoResponses = await captureNavigationResponses(
+  const rawConversationJson = await fetchConversationJsonFromBrowser(
     input.page,
-    input.chatHref,
-    (responseUrl) => responseUrl.includes("/backend-api/"),
-    (responses) => {
-      const convoEntry = [...responses.entries()].find(([responseUrl]) => {
-        try {
-          return (
-            new URL(responseUrl).pathname ===
-            `/backend-api/conversation/${input.chatId}`
-          );
-        } catch {
-          return false;
-        }
-      });
-      if (!convoEntry) {
-        return false;
-      }
-      if (!isPositiveStatus(convoEntry[1].status)) {
-        return true;
-      }
-      try {
-        const parsed = JSON.parse(
-          responseBodyToText(convoEntry[1]),
-        ) as ApiConversation;
-        return Boolean(
-          parsed.mapping && Object.keys(parsed.mapping).length > 0,
-        );
-      } catch {
-        return false;
-      }
-    },
+    input.chatId,
+    input.backendHeaders,
   );
 
-  const convoEntry = [...convoResponses.entries()].find(([responseUrl]) => {
-    try {
-      return (
-        new URL(responseUrl).pathname ===
-        `/backend-api/conversation/${input.chatId}`
-      );
-    } catch {
-      return false;
-    }
+  return writeConversationExport({
+    input,
+    rawConversationJson,
+    assetResponses: new Map(),
+    exportStartedAt,
   });
-  if (!convoEntry) {
-    throw new BackendRequestError(
-      `Could not capture conversation payload for ${input.chatId}`,
-      null,
-    );
-  }
+}
 
-  if (!isPositiveStatus(convoEntry[1].status)) {
-    throw new BackendRequestError(
-      `Could not fetch conversation payload for ${input.chatId} status=${convoEntry[1].status ?? "unknown"}`,
-      convoEntry[1].status ?? null,
-    );
-  }
-
-  const rawConversationJson = responseBodyToText(convoEntry[1]);
+async function writeConversationExport(params: {
+  input: ConversationExportInput;
+  rawConversationJson: string;
+  assetResponses: Map<string, CapturedResponse>;
+  exportStartedAt: string;
+}): Promise<ConversationExportOutput> {
+  const { input, rawConversationJson, assetResponses, exportStartedAt } =
+    params;
   const conversation = JSON.parse(rawConversationJson) as ApiConversation;
   const rendered = renderConversationMarkdownFromApi(conversation, {
     renderUnknownPartsAsJson: input.renderUnknownPartsAsJson,
@@ -139,23 +101,6 @@ export async function exportConversation(
   }
   input.usedMarkdownPaths.add(path.resolve(markdownPath));
   input.existingMarkdownPaths.add(path.resolve(markdownPath));
-
-  const assetResponses = new Map<string, CapturedResponse>();
-  for (const [responseUrl, response] of convoResponses.entries()) {
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(responseUrl);
-    } catch {
-      continue;
-    }
-    if (parsedUrl.pathname !== "/backend-api/estuary/content") {
-      continue;
-    }
-    const fileId = parsedUrl.searchParams.get("id");
-    if (fileId) {
-      assetResponses.set(fileId, response as CapturedResponse);
-    }
-  }
 
   const assetTarget = resolveAssetWriteTarget({
     strategy: input.assetStrategy,
@@ -235,6 +180,62 @@ export async function exportConversation(
   };
 }
 
+async function fetchConversationJsonFromBrowser(
+  page: BrowserClient,
+  chatId: string,
+  headers: Record<string, string>,
+) {
+  const payload = (await page.send("Runtime.evaluate", {
+    returnByValue: true,
+    awaitPromise: true,
+    expression: `(${function browserFetchConversation(
+      chatId: string,
+      headers: Record<string, string>,
+    ) {
+      return (async () => {
+        const response = await fetch(
+          "/backend-api/conversation/" + encodeURIComponent(chatId),
+          {
+            credentials: "include",
+            headers,
+          },
+        );
+        return {
+          ok: response.ok,
+          status: response.status,
+          text: await response.text(),
+        };
+      })();
+    }.toString()})(${JSON.stringify(chatId)}, ${JSON.stringify(
+      normalizeConversationFetchHeaders(headers, chatId),
+    )})`,
+  })) as {
+    result?: {
+      value?: {
+        ok?: boolean;
+        status?: number;
+        text?: string;
+      };
+    };
+  };
+
+  const value = payload.result?.value;
+  if (!value || !value.ok) {
+    throw new BackendRequestError(
+      `Could not fetch conversation payload for ${chatId} status=${value?.status ?? "unknown"}`,
+      value?.status ?? null,
+    );
+  }
+  if (!value.text) {
+    throw new BackendRequestError(
+      `Could not fetch conversation payload for ${chatId}: empty response`,
+      value.status ?? null,
+    );
+  }
+
+  return value.text;
+}
+
 async function syncRawConversationJsonArtifact(params: {
   markdownPath: string;
   rawConversationJson: string;
@@ -302,12 +303,6 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function responseBodyToText(response: CapturedResponse): string {
-  return response.base64Encoded
-    ? Buffer.from(response.body, "base64").toString("utf8")
-    : response.body;
-}
-
 async function downloadFileById(
   fileId: string,
   headers: Record<string, string>,
@@ -356,10 +351,6 @@ async function downloadFileById(
   };
 }
 
-function isPositiveStatus(status: number | undefined) {
-  return typeof status !== "number" || (status >= 200 && status < 300);
-}
-
 function normalizeDownloadHeaders(
   headers: Record<string, string>,
   fileId: string,
@@ -386,4 +377,37 @@ function normalizeDownloadHeaders(
   out["x-openai-target-path"] = `/backend-api/files/download/${fileId}`;
   out["x-openai-target-route"] = "/backend-api/files/download/{file_id}";
   return out;
+}
+
+function normalizeConversationFetchHeaders(
+  headers: Record<string, string>,
+  chatId: string,
+): Record<string, string> {
+  return omitEmptyHeaders({
+    authorization: getHeader(headers, "authorization"),
+    "oai-client-build-number": getHeader(headers, "oai-client-build-number"),
+    "oai-client-version": getHeader(headers, "oai-client-version"),
+    "oai-device-id": getHeader(headers, "oai-device-id"),
+    "oai-language": getHeader(headers, "oai-language"),
+    "oai-session-id": getHeader(headers, "oai-session-id"),
+    "x-openai-target-path": `/backend-api/conversation/${chatId}`,
+    "x-openai-target-route": "/backend-api/conversation/{conversation_id}",
+    referer: "https://chatgpt.com/",
+  });
+}
+
+function getHeader(headers: Record<string, string>, name: string) {
+  const lowerName = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lowerName && value) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function omitEmptyHeaders(headers: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([, value]) => value !== ""),
+  );
 }

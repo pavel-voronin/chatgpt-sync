@@ -13,7 +13,7 @@ import {
   saveChatgptIndex,
   upsertConversationIndex,
 } from "./index-store";
-import { exportConversation } from "./conversation-export";
+import { exportConversationFromBackendApi } from "./conversation-export";
 import { isBackendRequestError } from "./errors";
 import {
   planConversationSummaries,
@@ -138,7 +138,7 @@ export async function apiMain() {
       console.log(`[single] exporting conversation ${conversationId}`);
       const existing = initialIndex.conversations[conversationId];
       const filesystem = await readExistingRecords(workspaceDir);
-      const exportResult = await exportConversation({
+      const exportResult = await exportConversationFromBackendApi({
         page,
         chatId: conversationId,
         chatHref: `https://chatgpt.com/c/${conversationId}`,
@@ -317,6 +317,9 @@ async function prepareChatgptBackendHeaders(params: {
   if (!params.initialUrl.includes("chatgpt.com")) {
     console.log("[browser] opening https://chatgpt.com/");
     await params.page.send("Page.navigate", { url: "https://chatgpt.com/" });
+  } else if (isChatgptConversationUrl(params.initialUrl)) {
+    console.log("[browser] leaving active conversation before header capture");
+    await params.page.send("Page.navigate", { url: "https://chatgpt.com/" });
   } else {
     await params.page.send("Page.reload", { ignoreCache: true });
   }
@@ -337,6 +340,18 @@ async function prepareChatgptBackendHeaders(params: {
       await probeBackendHeaders(params.page);
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+function isChatgptConversationUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.hostname.endsWith("chatgpt.com") &&
+      parsed.pathname.startsWith("/c/")
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -507,7 +522,6 @@ async function exportPendingConversations(params: {
       continue;
     }
 
-    const chatHref = `https://chatgpt.com/c/${chatId}`;
     await waitBeforeExportStart(
       params.startDelayMs,
       record.summary.title,
@@ -521,10 +535,10 @@ async function exportPendingConversations(params: {
       `[export] progress=${formatProgress(index + 1, pending.length)} ${record.summary.title}`,
     );
 
-    const exportResult = await exportConversation({
+    const exportResult = await exportConversationFromBackendApi({
       page: params.page,
       chatId,
-      chatHref,
+      chatHref: `https://chatgpt.com/c/${chatId}`,
       workspaceDir: params.workspaceDir,
       inboxDir: params.inboxDir,
       assetStrategy: params.assetStrategy,

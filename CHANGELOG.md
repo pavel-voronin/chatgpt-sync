@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.4
+
+- fix(chatgpt): fetch conversation exports through the backend API
+- chore(release): bump package version to 0.12.4
+
 ## 0.12.3
 
 - fix(chatgpt): clean removed pending exports before selecting batches
